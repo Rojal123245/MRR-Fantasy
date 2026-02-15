@@ -1,0 +1,216 @@
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #0a0e17;
+  --bg-secondary: #131a2b;
+  --bg-elevated: #1a2340;
+  --bg-card: #0f1525;
+  --accent-green: #00e676;
+  --accent-green-dim: #00c864;
+  --accent-amber: #ffab00;
+  --accent-amber-dim: #e69800;
+  --text-primary: #f0f2f5;
+  --text-secondary: #c8cdd6;
+  --text-muted: #7a8599;
+  --border-color: #1e2a45;
+  --border-glow: rgba(0, 230, 118, 0.15);
+  --danger: #ff5252;
+}
+
+@theme inline {
+  --color-background: var(--bg-primary);
+  --color-foreground: var(--text-primary);
+  --color-card: var(--bg-card);
+  --color-elevated: var(--bg-elevated);
+  --color-secondary: var(--bg-secondary);
+  --color-accent: var(--accent-green);
+  --color-accent-amber: var(--accent-amber);
+  --color-muted: var(--text-muted);
+  --color-border: var(--border-color);
+  --font-display: 'Oswald', sans-serif;
+  --font-body: 'DM Sans', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Pitch pattern background */
+.pitch-pattern {
+  background-image:
+    linear-gradient(rgba(0, 230, 118, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 230, 118, 0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+/* Glassmorphism card */
+.glass-card {
+  background: linear-gradient(135deg, rgba(19, 26, 43, 0.8), rgba(26, 35, 64, 0.6));
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 230, 118, 0.1);
+  border-radius: 16px;
+  transition: all 0.3s ease;
+}
+
+.glass-card:hover {
+  border-color: rgba(0, 230, 118, 0.3);
+  box-shadow: 0 0 30px rgba(0, 230, 118, 0.08);
+  transform: translateY(-2px);
+}
+
+/* Glow effects */
+.glow-green {
+  box-shadow: 0 0 20px rgba(0, 230, 118, 0.2), 0 0 60px rgba(0, 230, 118, 0.05);
+}
+
+.glow-amber {
+  box-shadow: 0 0 20px rgba(255, 171, 0, 0.2), 0 0 60px rgba(255, 171, 0, 0.05);
+}
+
+.text-glow-green {
+  text-shadow: 0 0 20px rgba(0, 230, 118, 0.4);
+}
+
+.text-glow-amber {
+  text-shadow: 0 0 20px rgba(255, 171, 0, 0.4);
+}
+
+/* Gradient mesh hero */
+.hero-gradient {
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(0, 230, 118, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(255, 171, 0, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(0, 100, 200, 0.04) 0%, transparent 50%),
+    var(--bg-primary);
+}
+
+/* Stadium floodlight effect */
+.floodlight {
+  background: radial-gradient(ellipse at top, rgba(255, 171, 0, 0.06) 0%, transparent 60%);
+}
+
+/* Button styles */
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent-green), var(--accent-green-dim));
+  color: #0a0e17;
+  font-family: 'Oswald', sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 12px;
+  padding: 12px 32px;
+  transition: all 0.3s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  box-shadow: 0 0 30px rgba(0, 230, 118, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--accent-green);
+  font-family: 'Oswald', sans-serif;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 12px;
+  padding: 12px 32px;
+  border: 1px solid var(--accent-green);
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: rgba(0, 230, 118, 0.1);
+  box-shadow: 0 0 20px rgba(0, 230, 118, 0.15);
+}
+
+/* Mini pitch for formation */
+.mini-pitch {
+  background:
+    linear-gradient(to bottom, transparent 49.5%, rgba(255, 255, 255, 0.1) 49.5%, rgba(255, 255, 255, 0.1) 50.5%, transparent 50.5%),
+    radial-gradient(circle at 50% 50%, transparent 14%, rgba(255, 255, 255, 0.08) 14%, rgba(255, 255, 255, 0.08) 15%, transparent 15%),
+    linear-gradient(135deg, #1a5c2a, #0d3318);
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-elevated);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-green);
+}
+
+/* Input styling */
+.input-field {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 12px 16px;
+  color: var(--text-primary);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.95rem;
+  transition: all 0.3s ease;
+  width: 100%;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--accent-green);
+  box-shadow: 0 0 0 3px rgba(0, 230, 118, 0.1);
+}
+
+.input-field::placeholder {
+  color: var(--text-muted);
+}
+
+/* Animated counter */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.count-up {
+  animation: countUp 0.6s ease-out forwards;
+}
+
+/* Stagger animation */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stagger-in {
+  animation: fadeInUp 0.6s ease-out forwards;
+  opacity: 0;
+}
+
+/* Position badge colors */
+.badge-gk { background: linear-gradient(135deg, #f59e0b, #d97706); }
+.badge-def { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+.badge-mid { background: linear-gradient(135deg, #10b981, #059669); }
+.badge-fwd { background: linear-gradient(135deg, #ef4444, #dc2626); }
