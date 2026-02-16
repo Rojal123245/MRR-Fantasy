@@ -11,6 +11,7 @@ import { saveAuth } from "@/lib/auth";
 export default function RegisterPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -22,7 +23,7 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const res = await register(username, email, password);
+      const res = await register(username, fullName, email, password);
       saveAuth(res.token, res.user);
       router.push("/dashboard");
     } catch (err) {
@@ -83,6 +84,21 @@ export default function RegisterPage() {
                   placeholder="Choose a username"
                   required
                   minLength={3}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>Full Name</label>
+              <div className="relative">
+                <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+                <input
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="input-field pl-11"
+                  placeholder="Your real name (e.g. Rojal Pradhan)"
+                  required
                 />
               </div>
             </div>
