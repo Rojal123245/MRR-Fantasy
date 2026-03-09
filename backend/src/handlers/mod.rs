@@ -1,4 +1,4 @@
-pub mod players;
-pub mod teams;
 pub mod leagues;
+pub mod players;
 pub mod points;
+pub mod teams;

@@ -16,6 +16,10 @@ use tracing_subscriber::EnvFilter;
 
 use auth::handler::AppState;
 
+async fn health_check() -> &'static str {
+    "ok"
+}
+
 #[tokio::main]
 async fn main() {
     // Initialize tracing
@@ -104,6 +108,7 @@ async fn main() {
 
     // Compose all routes under /api
     let app = Router::new()
+        .route("/healthz", get(health_check))
         .nest("/api/auth", auth_routes)
         .nest("/api/players", player_routes)
         .nest("/api/points", points_routes)
@@ -119,7 +124,5 @@ async fn main() {
         .await
         .expect("Failed to bind address");
 
-    axum::serve(listener, app)
-        .await
-        .expect("Server error");
+    axum::serve(listener, app).await.expect("Server error");
 }

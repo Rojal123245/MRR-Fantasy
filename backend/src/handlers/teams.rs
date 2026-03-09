@@ -21,19 +21,22 @@ pub async fn create_team(
     Json(body): Json<CreateTeamRequest>,
 ) -> AppResult<Json<FantasyTeam>> {
     if body.name.is_empty() {
-        return Err(AppError::BadRequest("Team name cannot be empty".to_string()));
+        return Err(AppError::BadRequest(
+            "Team name cannot be empty".to_string(),
+        ));
     }
 
     // Check if user already has a team
-    let existing = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM fantasy_teams WHERE user_id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_one(&state.pool)
-    .await?;
+    let existing =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM fantasy_teams WHERE user_id = $1")
+            .bind(auth.user_id)
+            .fetch_one(&state.pool)
+            .await?;
 
     if existing > 0 {
-        return Err(AppError::Conflict("You already have a fantasy team".to_string()));
+        return Err(AppError::Conflict(
+            "You already have a fantasy team".to_string(),
+        ));
     }
 
     let team = sqlx::query_as::<_, FantasyTeam>(
@@ -252,12 +255,11 @@ pub async fn set_team_players(
     .ok_or_else(|| AppError::NotFound("Team not found or access denied".to_string()))?;
 
     // Verify all 9 players exist and fetch starter details for position validation
-    let valid_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM players WHERE id = ANY($1)",
-    )
-    .bind(&all_ids)
-    .fetch_one(&state.pool)
-    .await?;
+    let valid_count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM players WHERE id = ANY($1)")
+            .bind(&all_ids)
+            .fetch_one(&state.pool)
+            .await?;
 
     if valid_count != 9 {
         return Err(AppError::BadRequest(
@@ -304,19 +306,22 @@ pub async fn set_team_players(
     }
 
     // Validate captain: name must NOT match user's full_name (case-insensitive)
-    let user_full_name = sqlx::query_scalar::<_, String>(
-        "SELECT full_name FROM users WHERE id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_one(&state.pool)
-    .await?;
+    let user_full_name =
+        sqlx::query_scalar::<_, String>("SELECT full_name FROM users WHERE id = $1")
+            .bind(auth.user_id)
+            .fetch_one(&state.pool)
+            .await?;
 
     let captain_player = starter_players
         .iter()
         .find(|p| p.id == body.captain_id)
         .ok_or_else(|| AppError::BadRequest("Captain player not found".to_string()))?;
 
-    if captain_player.name.trim().eq_ignore_ascii_case(user_full_name.trim()) {
+    if captain_player
+        .name
+        .trim()
+        .eq_ignore_ascii_case(user_full_name.trim())
+    {
         return Err(AppError::BadRequest(format!(
             "You cannot captain {} because they share your name. Choose a different captain.",
             captain_player.name

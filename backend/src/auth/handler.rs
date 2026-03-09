@@ -26,13 +26,17 @@ pub async fn register(
 ) -> AppResult<Json<AuthResponse>> {
     // Validate input
     if body.username.len() < 3 {
-        return Err(AppError::BadRequest("Username must be at least 3 characters".to_string()));
+        return Err(AppError::BadRequest(
+            "Username must be at least 3 characters".to_string(),
+        ));
     }
     if body.full_name.trim().is_empty() {
         return Err(AppError::BadRequest("Full name is required".to_string()));
     }
     if body.password.len() < 6 {
-        return Err(AppError::BadRequest("Password must be at least 6 characters".to_string()));
+        return Err(AppError::BadRequest(
+            "Password must be at least 6 characters".to_string(),
+        ));
     }
     if !body.email.contains('@') {
         return Err(AppError::BadRequest("Invalid email address".to_string()));
@@ -40,7 +44,7 @@ pub async fn register(
 
     // Check if user already exists
     let existing = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM users WHERE email = $1 OR username = $2"
+        "SELECT COUNT(*) FROM users WHERE email = $1 OR username = $2",
     )
     .bind(&body.email)
     .bind(&body.username)
@@ -48,7 +52,9 @@ pub async fn register(
     .await?;
 
     if existing > 0 {
-        return Err(AppError::Conflict("User with this email or username already exists".to_string()));
+        return Err(AppError::Conflict(
+            "User with this email or username already exists".to_string(),
+        ));
     }
 
     // Hash password

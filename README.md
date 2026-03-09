@@ -64,6 +64,16 @@ npm run dev
 
 The frontend starts on `http://localhost:3000`.
 
+## Raspberry Pi Deployment
+
+Production-ready Raspberry Pi deployment files are included in:
+
+- `deploy_pi.sh` (one-shot installer/deployer)
+- `deploy/raspberry-pi/README.md`
+- `deploy/raspberry-pi/mrrfantasy-backend.service`
+- `deploy/raspberry-pi/mrrfantasy-frontend.service`
+- `deploy/raspberry-pi/mrrfantasy.nginx.conf`
+
 ## API Endpoints
 
 ### Auth
