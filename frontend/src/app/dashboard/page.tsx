@@ -106,8 +106,8 @@ export default function DashboardPage() {
                         className="rounded-xl p-3 flex items-center gap-3"
                         style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-color)" }}
                       >
-                        <span className={`badge-${player.position.toLowerCase()} text-[10px] font-bold px-2 py-0.5 rounded-full text-white`}>
-                          {player.position}
+                        <span className={`badge-${(player.assigned_position || player.position).toLowerCase()} text-[10px] font-bold px-2 py-0.5 rounded-full text-white`}>
+                          {player.assigned_position || player.position}
                         </span>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{player.name}</p>

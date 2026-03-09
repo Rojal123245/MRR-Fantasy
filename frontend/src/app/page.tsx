@@ -2,28 +2,32 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Trophy, Users, Shield, Zap, ChevronRight, Star } from "lucide-react";
+import { Trophy, Users, Shield, Zap, ChevronRight, Star, Hexagon } from "lucide-react";
 
 const features = [
   {
     icon: Shield,
     title: "Build Your Squad",
-    description: "Pick 6 elite players across all positions to form your ultimate fantasy team.",
+    description: "Draft 6 elite footballers across GK, DEF, MID, FWD. Choose your formation. Pick your captain.",
+    accent: "#00e676",
   },
   {
     icon: Zap,
     title: "Earn Points",
-    description: "Score points for goals, assists, clean sheets, saves, and tackles every match week.",
+    description: "Goals, assists, clean sheets, saves, tackles — every action counts toward your weekly score.",
+    accent: "#f59e0b",
   },
   {
     icon: Users,
     title: "Create Leagues",
-    description: "Compete head-to-head with friends in private leagues with invite codes.",
+    description: "Private leagues with invite codes. Go head-to-head with friends and prove your tactics.",
+    accent: "#3b82f6",
   },
   {
     icon: Trophy,
     title: "Climb the Ranks",
-    description: "Track your standing on live leaderboards and prove you're the best manager.",
+    description: "Live leaderboards updated every match week. One goal can change everything.",
+    accent: "#ef4444",
   },
 ];
 
@@ -31,125 +35,133 @@ const containerVariants = {
   hidden: { opacity: 0 },
   visible: {
     opacity: 1,
-    transition: { staggerChildren: 0.15 },
+    transition: { staggerChildren: 0.12 },
   },
 };
 
 const itemVariants = {
-  hidden: { opacity: 0, y: 30 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: "easeOut" as const } },
+  hidden: { opacity: 0, y: 40 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.7, ease: [0.25, 0.46, 0.45, 0.94] as const } },
 };
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen pitch-pattern">
-      {/* Hero Section */}
-      <section className="hero-gradient floodlight relative overflow-hidden">
-        {/* Decorative elements */}
-        <div className="absolute top-0 left-0 w-full h-full">
-          <div className="absolute top-20 left-10 w-2 h-2 rounded-full bg-[var(--accent-green)] opacity-30 animate-pulse" />
-          <div className="absolute top-40 right-20 w-3 h-3 rounded-full bg-[var(--accent-amber)] opacity-20 animate-pulse" style={{ animationDelay: "1s" }} />
-          <div className="absolute bottom-40 left-1/4 w-1.5 h-1.5 rounded-full bg-[var(--accent-green)] opacity-25 animate-pulse" style={{ animationDelay: "2s" }} />
+    <div className="min-h-screen" style={{ background: "var(--bg-primary)" }}>
+      {/* ── HERO SECTION ── */}
+      <section className="hero-gradient floodlight relative overflow-hidden min-h-screen flex flex-col">
+        {/* Ambient orbs */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute w-[600px] h-[600px] rounded-full opacity-[0.04]" style={{ background: "radial-gradient(circle, #00e676, transparent 70%)", top: "-10%", left: "-10%" }} />
+          <div className="absolute w-[500px] h-[500px] rounded-full opacity-[0.03]" style={{ background: "radial-gradient(circle, #f59e0b, transparent 70%)", bottom: "-5%", right: "-10%" }} />
+          <div className="absolute top-32 left-[15%] w-1 h-1 rounded-full bg-[var(--accent-green)] opacity-40 float-animation" />
+          <div className="absolute top-48 right-[20%] w-1.5 h-1.5 rounded-full bg-[var(--accent-amber)] opacity-25 float-animation" style={{ animationDelay: "2s" }} />
+          <div className="absolute bottom-[30%] left-[40%] w-1 h-1 rounded-full bg-[var(--accent-green)] opacity-30 float-animation" style={{ animationDelay: "4s" }} />
         </div>
 
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-32 relative">
-          {/* Top bar */}
+        {/* Top bar */}
+        <div className="relative z-10 max-w-7xl mx-auto w-full px-6 lg:px-8 pt-8">
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex items-center justify-between mb-20"
+            transition={{ duration: 0.6 }}
+            className="flex items-center justify-between"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base" style={{ background: "linear-gradient(135deg, var(--accent-green), var(--accent-green-dim))", color: "var(--bg-primary)", fontFamily: "var(--font-display)" }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base pulse-glow" style={{ background: "linear-gradient(135deg, var(--accent-green), var(--accent-green-dim))", color: "#000", fontFamily: "var(--font-display)" }}>
                 M
               </div>
-              <span className="text-xl font-bold tracking-wider" style={{ fontFamily: "var(--font-display)" }}>
+              <span className="text-xl font-bold tracking-wide" style={{ fontFamily: "var(--font-display)" }}>
                 MRR <span style={{ color: "var(--accent-green)" }}>FANTASY</span>
               </span>
             </div>
             <div className="flex items-center gap-3">
-              <Link href="/login" className="btn-secondary text-sm no-underline">
+              <Link href="/login" className="btn-secondary text-xs no-underline py-2.5 px-5">
                 Login
               </Link>
-              <Link href="/register" className="btn-primary text-sm no-underline">
+              <Link href="/register" className="btn-primary text-xs no-underline py-2.5 px-5">
                 Get Started
               </Link>
             </div>
           </motion.div>
+        </div>
 
-          {/* Hero content */}
-          <motion.div
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.2 }}
-            className="text-center max-w-4xl mx-auto"
-          >
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-8" style={{ background: "rgba(0, 230, 118, 0.08)", border: "1px solid rgba(0, 230, 118, 0.2)" }}>
-              <Star size={14} style={{ color: "var(--accent-amber)" }} />
-              <span className="text-xs uppercase tracking-wider" style={{ color: "var(--accent-green)", fontFamily: "var(--font-display)" }}>Season 2026 is Live</span>
-            </div>
+        {/* Hero content */}
+        <div className="relative z-10 flex-1 flex items-center justify-center">
+          <div className="max-w-5xl mx-auto px-6 lg:px-8 text-center">
+            <motion.div
+              initial={{ opacity: 0, y: 50 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 1, delay: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+            >
+              <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full mb-10" style={{ background: "rgba(0, 230, 118, 0.06)", border: "1px solid rgba(0, 230, 118, 0.12)" }}>
+                <Star size={13} style={{ color: "var(--accent-amber)" }} />
+                <span className="text-xs uppercase tracking-[0.15em] font-medium" style={{ color: "var(--accent-green)", fontFamily: "var(--font-display)" }}>Season 2026 is Live</span>
+              </div>
 
-            <h1 className="text-5xl sm:text-7xl lg:text-8xl font-bold mb-6 leading-tight" style={{ fontFamily: "var(--font-display)" }}>
-              YOUR PITCH.
-              <br />
-              <span className="text-glow-green" style={{ color: "var(--accent-green)" }}>YOUR RULES.</span>
-            </h1>
+              <h1 className="text-6xl sm:text-8xl lg:text-9xl font-extrabold leading-[0.9] mb-8" style={{ fontFamily: "var(--font-display)" }}>
+                <span className="block">YOUR PITCH</span>
+                <span className="block text-glow-green" style={{ color: "var(--accent-green)" }}>YOUR RULES</span>
+              </h1>
 
-            <p className="text-lg sm:text-xl mb-12 max-w-2xl mx-auto" style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)", lineHeight: 1.7 }}>
-              Draft 6 world-class footballers, compete in leagues with friends,
-              and watch your points pile up every match week. The ultimate fantasy
-              football experience awaits.
-            </p>
+              <p className="text-lg sm:text-xl max-w-2xl mx-auto mb-14 leading-relaxed" style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}>
+                Draft 6 world-class footballers. Set your formation.
+                Pick your captain. Dominate your league.
+              </p>
 
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link href="/register" className="btn-primary text-base flex items-center gap-2 no-underline px-8 py-4">
-                Start Your Journey
-                <ChevronRight size={18} />
-              </Link>
-              <Link href="/login" className="btn-secondary text-base no-underline px-8 py-4">
-                I Have an Account
-              </Link>
-            </div>
-          </motion.div>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <Link href="/register" className="btn-primary text-base flex items-center gap-2 no-underline px-10 py-4">
+                  Start Your Journey
+                  <ChevronRight size={18} />
+                </Link>
+                <Link href="/login" className="btn-secondary text-base no-underline px-10 py-4">
+                  I Have an Account
+                </Link>
+              </div>
+            </motion.div>
+          </div>
+        </div>
 
-          {/* Stats bar */}
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6, duration: 0.6 }}
-            className="mt-24 grid grid-cols-3 gap-8 max-w-2xl mx-auto"
-          >
+        {/* Stats bar */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.8, duration: 0.7 }}
+          className="relative z-10 pb-20"
+        >
+          <div className="max-w-3xl mx-auto px-6 grid grid-cols-3 gap-8">
             {[
               { value: "30+", label: "Players" },
               { value: "6", label: "Per Squad" },
               { value: "∞", label: "Glory" },
             ].map((stat, i) => (
               <div key={i} className="text-center">
-                <div className="text-3xl sm:text-4xl font-bold mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--accent-amber)" }}>
+                <div className="text-4xl sm:text-5xl font-extrabold mb-1" style={{ fontFamily: "var(--font-display)", color: "var(--accent-amber)" }}>
                   {stat.value}
                 </div>
-                <div className="text-xs uppercase tracking-wider" style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>
+                <div className="text-[11px] uppercase tracking-[0.2em] font-medium" style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>
                   {stat.label}
                 </div>
               </div>
             ))}
-          </motion.div>
-        </div>
+          </div>
+        </motion.div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-24" style={{ background: "var(--bg-secondary)" }}>
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* ── FEATURES SECTION ── */}
+      <section className="relative py-28" style={{ background: "var(--bg-secondary)" }}>
+        <div className="max-w-7xl mx-auto px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
             viewport={{ once: true }}
-            className="text-center mb-16"
+            className="text-center mb-20"
           >
-            <h2 className="text-3xl sm:text-4xl font-bold mb-4" style={{ fontFamily: "var(--font-display)" }}>
+            <span className="text-xs uppercase tracking-[0.2em] font-medium mb-4 block" style={{ color: "var(--accent-green)", fontFamily: "var(--font-display)" }}>
+              The Game
+            </span>
+            <h2 className="text-4xl sm:text-5xl font-extrabold" style={{ fontFamily: "var(--font-display)" }}>
               HOW IT <span style={{ color: "var(--accent-green)" }}>WORKS</span>
             </h2>
-            <p style={{ color: "var(--text-muted)" }}>Everything you need to dominate the fantasy league</p>
           </motion.div>
 
           <motion.div
@@ -162,12 +174,15 @@ export default function LandingPage() {
             {features.map((feature, i) => {
               const Icon = feature.icon;
               return (
-                <motion.div key={i} variants={itemVariants} className="glass-card p-6 text-center">
-                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(0, 230, 118, 0.1)" }}>
-                    <Icon size={28} style={{ color: "var(--accent-green)" }} />
+                <motion.div key={i} variants={itemVariants} className="glass-card p-8 group relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-[0.04] -translate-y-1/2 translate-x-1/2" style={{ background: `radial-gradient(circle, ${feature.accent}, transparent 70%)` }} />
+                  <div className="relative">
+                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6 transition-transform group-hover:scale-110" style={{ background: `${feature.accent}10`, border: `1px solid ${feature.accent}20` }}>
+                      <Icon size={26} style={{ color: feature.accent }} />
+                    </div>
+                    <h3 className="text-lg font-bold mb-3" style={{ fontFamily: "var(--font-display)" }}>{feature.title}</h3>
+                    <p className="text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>{feature.description}</p>
                   </div>
-                  <h3 className="text-lg font-bold mb-2" style={{ fontFamily: "var(--font-display)" }}>{feature.title}</h3>
-                  <p className="text-sm" style={{ color: "var(--text-muted)", lineHeight: 1.6 }}>{feature.description}</p>
                 </motion.div>
               );
             })}
@@ -175,19 +190,21 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Points breakdown */}
-      <section className="py-24">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* ── SCORING TABLE ── */}
+      <section className="py-28 pitch-pattern">
+        <div className="max-w-4xl mx-auto px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
             viewport={{ once: true }}
             className="text-center mb-16"
           >
-            <h2 className="text-3xl sm:text-4xl font-bold mb-4" style={{ fontFamily: "var(--font-display)" }}>
+            <span className="text-xs uppercase tracking-[0.2em] font-medium mb-4 block" style={{ color: "var(--accent-amber)", fontFamily: "var(--font-display)" }}>
+              Points
+            </span>
+            <h2 className="text-4xl sm:text-5xl font-extrabold" style={{ fontFamily: "var(--font-display)" }}>
               SCORING <span style={{ color: "var(--accent-amber)" }}>SYSTEM</span>
             </h2>
-            <p style={{ color: "var(--text-muted)" }}>How your players earn you points</p>
           </motion.div>
 
           <motion.div
@@ -198,9 +215,9 @@ export default function LandingPage() {
           >
             <table className="w-full text-left">
               <thead>
-                <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
-                  <th className="px-6 py-4 text-sm uppercase tracking-wider" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Action</th>
-                  <th className="px-6 py-4 text-sm uppercase tracking-wider text-right" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Points</th>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                  <th className="px-8 py-5 text-[11px] uppercase tracking-[0.15em] font-semibold" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Action</th>
+                  <th className="px-8 py-5 text-[11px] uppercase tracking-[0.15em] font-semibold text-right" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Points</th>
                 </tr>
               </thead>
               <tbody>
@@ -213,9 +230,9 @@ export default function LandingPage() {
                   { action: "Save (GK)", points: "+2" },
                   { action: "Tackle Won", points: "+2" },
                 ].map((row, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid var(--border-color)" }}>
-                    <td className="px-6 py-4 text-sm" style={{ color: "var(--text-secondary)" }}>{row.action}</td>
-                    <td className="px-6 py-4 text-right font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>{row.points}</td>
+                  <tr key={i} className="transition-colors hover:bg-white/[0.02]" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                    <td className="px-8 py-4 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>{row.action}</td>
+                    <td className="px-8 py-4 text-right font-bold text-base" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>{row.points}</td>
                   </tr>
                 ))}
               </tbody>
@@ -224,30 +241,35 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="py-24" style={{ background: "var(--bg-secondary)" }}>
+      {/* ── CTA ── */}
+      <section className="py-32 relative overflow-hidden" style={{ background: "var(--bg-secondary)" }}>
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute w-[800px] h-[800px] rounded-full opacity-[0.03] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" style={{ background: "radial-gradient(circle, #00e676, transparent 60%)" }} />
+        </div>
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="max-w-3xl mx-auto text-center px-4"
+          className="relative z-10 max-w-3xl mx-auto text-center px-6"
         >
-          <h2 className="text-4xl sm:text-5xl font-bold mb-6" style={{ fontFamily: "var(--font-display)" }}>
-            READY TO <span className="text-glow-green" style={{ color: "var(--accent-green)" }}>MANAGE</span>?
+          <Hexagon size={48} className="mx-auto mb-8 opacity-20" style={{ color: "var(--accent-green)" }} />
+          <h2 className="text-5xl sm:text-6xl font-extrabold mb-6" style={{ fontFamily: "var(--font-display)" }}>
+            READY TO{" "}
+            <span className="text-glow-green" style={{ color: "var(--accent-green)" }}>MANAGE</span>?
           </h2>
-          <p className="mb-8" style={{ color: "var(--text-muted)", fontSize: "1.1rem" }}>
+          <p className="mb-10 text-lg" style={{ color: "var(--text-muted)" }}>
             Create your free account and build your dream squad today.
           </p>
-          <Link href="/register" className="btn-primary text-lg inline-flex items-center gap-2 no-underline px-10 py-4">
+          <Link href="/register" className="btn-primary text-lg inline-flex items-center gap-3 no-underline px-12 py-5">
             Create Your Team
             <ChevronRight size={20} />
           </Link>
         </motion.div>
       </section>
 
-      {/* Footer */}
-      <footer className="py-8 text-center" style={{ borderTop: "1px solid var(--border-color)" }}>
-        <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+      {/* ── FOOTER ── */}
+      <footer className="py-10 text-center" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+        <p className="text-sm font-medium" style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}>
           &copy; 2026 MRR Fantasy. All rights reserved.
         </p>
       </footer>

@@ -1,0 +1,17 @@
+[Unit]
+Description=MRR Fantasy Backend (Rust/Axum)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/MrrFantasy/backend
+EnvironmentFile=/etc/mrrfantasy-backend.env
+ExecStart=/home/pi/MrrFantasy/backend/target/release/mrr-fantasy-backend
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

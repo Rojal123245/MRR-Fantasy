@@ -35,21 +35,36 @@ export default function Nav() {
   if (!user) return null;
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50" style={{ background: "rgba(10, 14, 23, 0.92)", backdropFilter: "blur(20px)", borderBottom: "1px solid var(--border-color)" }}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <nav
+      className="fixed top-0 left-0 right-0 z-50"
+      style={{
+        background: "rgba(0, 0, 0, 0.6)",
+        backdropFilter: "blur(24px) saturate(150%)",
+        WebkitBackdropFilter: "blur(24px) saturate(150%)",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
+      }}
+    >
+      <div className="max-w-7xl mx-auto px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link href="/dashboard" className="flex items-center gap-2 no-underline">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm" style={{ background: "linear-gradient(135deg, var(--accent-green), var(--accent-green-dim))", color: "var(--bg-primary)", fontFamily: "var(--font-display)" }}>
+          <Link href="/dashboard" className="flex items-center gap-2.5 no-underline">
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm"
+              style={{
+                background: "linear-gradient(135deg, var(--accent-green), var(--accent-green-dim))",
+                color: "#000",
+                fontFamily: "var(--font-display)",
+              }}
+            >
               M
             </div>
-            <span className="text-lg font-bold tracking-wider" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+            <span className="text-lg font-bold tracking-wide" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
               MRR <span style={{ color: "var(--accent-green)" }}>FANTASY</span>
             </span>
           </Link>
 
           {/* Desktop Nav */}
-          <div className="hidden md:flex items-center gap-1">
+          <div className="hidden md:flex items-center gap-0.5">
             {navLinks.map((link) => {
               const isActive = pathname === link.href;
               const Icon = link.icon;
@@ -57,19 +72,22 @@ export default function Nav() {
                 <Link
                   key={link.href}
                   href={link.href}
-                  className="relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium no-underline transition-colors"
+                  className="relative flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold no-underline transition-all"
                   style={{
                     fontFamily: "var(--font-body)",
                     color: isActive ? "var(--accent-green)" : "var(--text-muted)",
                   }}
                 >
-                  <Icon size={16} />
+                  <Icon size={15} />
                   {link.label}
                   {isActive && (
                     <motion.div
                       layoutId="activeTab"
-                      className="absolute inset-0 rounded-lg"
-                      style={{ background: "rgba(0, 230, 118, 0.08)", border: "1px solid rgba(0, 230, 118, 0.15)" }}
+                      className="absolute inset-0 rounded-xl"
+                      style={{
+                        background: "rgba(0, 230, 118, 0.06)",
+                        border: "1px solid rgba(0, 230, 118, 0.1)",
+                      }}
                       transition={{ type: "spring", stiffness: 380, damping: 30 }}
                     />
                   )}
@@ -80,16 +98,37 @@ export default function Nav() {
 
           {/* User section */}
           <div className="hidden md:flex items-center gap-4">
-            <span className="text-sm" style={{ color: "var(--text-muted)" }}>
-              {user.username}
-            </span>
-            <button onClick={handleLogout} className="flex items-center gap-1 text-sm cursor-pointer bg-transparent border-none" style={{ color: "var(--text-muted)" }} title="Logout">
-              <LogOut size={16} />
+            <div className="flex items-center gap-2.5">
+              <div
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold"
+                style={{
+                  background: "rgba(0, 230, 118, 0.1)",
+                  color: "var(--accent-green)",
+                  fontFamily: "var(--font-display)",
+                }}
+              >
+                {user.username.charAt(0).toUpperCase()}
+              </div>
+              <span className="text-[13px] font-medium" style={{ color: "var(--text-secondary)" }}>
+                {user.username}
+              </span>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1 text-sm cursor-pointer bg-transparent border-none transition-colors"
+              style={{ color: "var(--text-muted)" }}
+              title="Logout"
+            >
+              <LogOut size={15} />
             </button>
           </div>
 
           {/* Mobile hamburger */}
-          <button className="md:hidden bg-transparent border-none cursor-pointer" style={{ color: "var(--text-primary)" }} onClick={() => setMobileOpen(!mobileOpen)}>
+          <button
+            className="md:hidden bg-transparent border-none cursor-pointer"
+            style={{ color: "var(--text-primary)" }}
+            onClick={() => setMobileOpen(!mobileOpen)}
+          >
             {mobileOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
         </div>
@@ -101,7 +140,11 @@ export default function Nav() {
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           className="md:hidden px-4 pb-4"
-          style={{ background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-color)" }}
+          style={{
+            background: "rgba(0, 0, 0, 0.8)",
+            backdropFilter: "blur(20px)",
+            borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
+          }}
         >
           {navLinks.map((link) => {
             const Icon = link.icon;
@@ -111,7 +154,7 @@ export default function Nav() {
                 key={link.href}
                 href={link.href}
                 onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm no-underline"
+                className="flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm no-underline transition-colors"
                 style={{ color: isActive ? "var(--accent-green)" : "var(--text-muted)" }}
               >
                 <Icon size={18} />
@@ -119,7 +162,11 @@ export default function Nav() {
               </Link>
             );
           })}
-          <button onClick={handleLogout} className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm cursor-pointer bg-transparent border-none w-full" style={{ color: "var(--danger)" }}>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm cursor-pointer bg-transparent border-none w-full transition-colors"
+            style={{ color: "var(--danger)" }}
+          >
             <LogOut size={18} />
             Logout
           </button>

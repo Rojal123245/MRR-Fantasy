@@ -2,11 +2,12 @@
 
 import { motion } from "framer-motion";
 import { User, Zap, Crown } from "lucide-react";
-import type { Player } from "@/lib/api";
+import type { Player, Position } from "@/lib/api";
 
 interface PlayerCardProps {
   player: Player;
   selected?: boolean;
+  assignedPosition?: Position;
   onSelect?: (player: Player) => void;
   onRemove?: (player: Player) => void;
   delay?: number;
@@ -19,7 +20,7 @@ const positionColors: Record<string, string> = {
   FWD: "badge-fwd",
 };
 
-export default function PlayerCard({ player, selected, onSelect, onRemove, delay = 0 }: PlayerCardProps) {
+export default function PlayerCard({ player, selected, assignedPosition, onSelect, onRemove, delay = 0 }: PlayerCardProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -57,12 +58,29 @@ export default function PlayerCard({ player, selected, onSelect, onRemove, delay
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className={`${positionColors[player.position]} text-xs font-bold px-2 py-0.5 rounded-full text-white`}>
+            <span
+              className={`${positionColors[player.position]} text-xs font-bold px-2 py-0.5 rounded-full text-white`}
+              style={{
+                opacity: assignedPosition && assignedPosition !== player.position ? 0.5 : 1,
+                ...(assignedPosition === player.position ? { boxShadow: "0 0 8px rgba(0,230,118,0.5)" } : {}),
+              }}
+            >
               {player.position}
             </span>
             {player.secondary_position && (
-              <span className={`${positionColors[player.secondary_position]} text-xs font-bold px-2 py-0.5 rounded-full text-white opacity-70`}>
+              <span
+                className={`${positionColors[player.secondary_position]} text-xs font-bold px-2 py-0.5 rounded-full text-white`}
+                style={{
+                  opacity: assignedPosition && assignedPosition !== player.secondary_position ? 0.5 : assignedPosition === player.secondary_position ? 1 : 0.7,
+                  ...(assignedPosition === player.secondary_position ? { boxShadow: "0 0 8px rgba(0,230,118,0.5)" } : {}),
+                }}
+              >
                 {player.secondary_position}
+              </span>
+            )}
+            {assignedPosition && assignedPosition !== player.position && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(255,171,0,0.2)", color: "#ffab00" }}>
+                FLEX
               </span>
             )}
             <span className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)", fontFamily: "var(--font-display)" }}>

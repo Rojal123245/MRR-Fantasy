@@ -24,30 +24,149 @@ pub async fn seed_players(pool: &PgPool) -> Result<(), sqlx::Error> {
     let players: Vec<(&str, &str, Option<&str>, &str, f64, bool)> = vec![
         // Goalkeepers
         ("Nitesh Das", "GK", Some("DEF"), "MRR Fantasy", 7.0, false),
-        ("Bishnu Raj Tamang", "GK", Some("MID"), "MRR Fantasy", 8.0, false),
+        (
+            "Bishnu Raj Tamang",
+            "GK",
+            Some("MID"),
+            "MRR Fantasy",
+            8.0,
+            false,
+        ),
         ("Himal Puri", "GK", None, "MRR Fantasy", 5.0, false),
-        ("Anod Shrestha", "GK", None, "MRR Fantasy", 10.0, true),            // TOP
+        ("Anod Shrestha", "GK", None, "MRR Fantasy", 10.0, true), // TOP
         // Forwards
-        ("Khagendra Kandel", "FWD", Some("DEF"), "MRR Fantasy", 7.0, false),
-        ("Arun Lamichhane", "FWD", Some("MID"), "MRR Fantasy", 7.0, false),
-        ("Aashish Tangnami", "FWD", Some("MID"), "MRR Fantasy", 10.0, true), // TOP
-        ("Kaushal Niraula", "FWD", Some("MID"), "MRR Fantasy", 5.0, false),
-        ("Rajeev Lamichhaney", "FWD", Some("MID"), "MRR Fantasy", 10.0, true), // TOP
-        ("Aashis Bhattarai", "FWD", Some("DEF"), "MRR Fantasy", 10.0, true), // TOP
-        ("Dip Kc", "FWD", Some("MID"), "MRR Fantasy", 10.0, true),           // TOP
-        ("Sanish Maharjan", "FWD", Some("MID"), "MRR Fantasy", 6.0, false),
-        ("Devendra Nepal", "FWD", Some("MID"), "MRR Fantasy", 7.0, false),
-        ("Rojal Pradhan", "FWD", Some("DEF"), "MRR Fantasy", 8.0, false),
-        ("Razz Kumar Basnet", "FWD", Some("MID"), "MRR Fantasy", 10.0, true), // TOP
+        (
+            "Khagendra Kandel",
+            "FWD",
+            Some("DEF"),
+            "MRR Fantasy",
+            7.0,
+            false,
+        ),
+        (
+            "Arun Lamichhane",
+            "FWD",
+            Some("MID"),
+            "MRR Fantasy",
+            7.0,
+            false,
+        ),
+        (
+            "Aashish Tangnami",
+            "FWD",
+            Some("MID"),
+            "MRR Fantasy",
+            10.0,
+            true,
+        ), // TOP
+        (
+            "Kaushal Niraula",
+            "FWD",
+            Some("MID"),
+            "MRR Fantasy",
+            5.0,
+            false,
+        ),
+        (
+            "Rajeev Lamichhaney",
+            "FWD",
+            Some("MID"),
+            "MRR Fantasy",
+            10.0,
+            true,
+        ), // TOP
+        (
+            "Aashis Bhattarai",
+            "FWD",
+            Some("DEF"),
+            "MRR Fantasy",
+            10.0,
+            true,
+        ), // TOP
+        ("Dip Kc", "FWD", Some("MID"), "MRR Fantasy", 10.0, true), // TOP
+        (
+            "Sanish Maharjan",
+            "FWD",
+            Some("MID"),
+            "MRR Fantasy",
+            6.0,
+            false,
+        ),
+        (
+            "Devendra Nepal",
+            "FWD",
+            Some("MID"),
+            "MRR Fantasy",
+            7.0,
+            false,
+        ),
+        (
+            "Rojal Pradhan",
+            "FWD",
+            Some("DEF"),
+            "MRR Fantasy",
+            8.0,
+            false,
+        ),
+        (
+            "Razz Kumar Basnet",
+            "FWD",
+            Some("MID"),
+            "MRR Fantasy",
+            10.0,
+            true,
+        ), // TOP
         ("Sudarshan Sapkota", "FWD", None, "MRR Fantasy", 6.0, false),
-        ("Siddhartha Shrestha", "FWD", Some("MID"), "MRR Fantasy", 8.0, false),
-        ("Dipak Mahatara", "FWD", Some("DEF"), "MRR Fantasy", 7.0, false),
+        (
+            "Siddhartha Shrestha",
+            "FWD",
+            Some("MID"),
+            "MRR Fantasy",
+            8.0,
+            false,
+        ),
+        (
+            "Dipak Mahatara",
+            "FWD",
+            Some("DEF"),
+            "MRR Fantasy",
+            7.0,
+            false,
+        ),
         // Midfielders
         ("Bishal Das", "MID", Some("DEF"), "MRR Fantasy", 6.0, false),
-        ("Subin Gajurel", "MID", Some("DEF"), "MRR Fantasy", 7.0, false),
-        ("Aayuush Rijal", "MID", Some("DEF"), "MRR Fantasy", 8.0, false),
-        ("Parbat Rokka", "MID", Some("DEF"), "MRR Fantasy", 9.0, false),
-        ("Sumit Luitel", "MID", Some("DEF"), "MRR Fantasy", 6.0, false),
+        (
+            "Subin Gajurel",
+            "MID",
+            Some("DEF"),
+            "MRR Fantasy",
+            7.0,
+            false,
+        ),
+        (
+            "Aayuush Rijal",
+            "MID",
+            Some("DEF"),
+            "MRR Fantasy",
+            8.0,
+            false,
+        ),
+        (
+            "Parbat Rokka",
+            "MID",
+            Some("DEF"),
+            "MRR Fantasy",
+            9.0,
+            false,
+        ),
+        (
+            "Sumit Luitel",
+            "MID",
+            Some("DEF"),
+            "MRR Fantasy",
+            6.0,
+            false,
+        ),
         // Defenders
         ("Dipendra Adhikari", "DEF", None, "MRR Fantasy", 6.0, false),
         ("Kishor Dhakal", "DEF", None, "MRR Fantasy", 9.0, false),
@@ -93,10 +212,9 @@ pub async fn seed_match_weeks(pool: &PgPool) -> Result<(), sqlx::Error> {
     tracing::info!("Seeding match weeks...");
 
     for week in 1..=5 {
-        let start = chrono::NaiveDate::from_ymd_opt(2026, 1, (week * 7 - 6) as u32)
-            .unwrap_or_default();
-        let end = chrono::NaiveDate::from_ymd_opt(2026, 1, (week * 7) as u32)
-            .unwrap_or_default();
+        let start =
+            chrono::NaiveDate::from_ymd_opt(2026, 1, (week * 7 - 6) as u32).unwrap_or_default();
+        let end = chrono::NaiveDate::from_ymd_opt(2026, 1, (week * 7) as u32).unwrap_or_default();
 
         sqlx::query(
             r#"INSERT INTO match_weeks (week_number, start_date, end_date, is_active)

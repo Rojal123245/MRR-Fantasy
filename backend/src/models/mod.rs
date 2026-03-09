@@ -1,11 +1,11 @@
-pub mod user;
-pub mod player;
-pub mod team;
 pub mod league;
+pub mod player;
 pub mod points;
+pub mod team;
+pub mod user;
 
-pub use user::*;
-pub use player::*;
-pub use team::*;
 pub use league::*;
+pub use player::*;
 pub use points::*;
+pub use team::*;
+pub use user::*;

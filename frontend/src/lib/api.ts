@@ -1,4 +1,6 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ??
+  (process.env.NODE_ENV === "development" ? "http://localhost:8080" : "");
 
 interface FetchOptions {
   method?: string;
@@ -35,6 +37,7 @@ async function apiFetch<T>(endpoint: string, options: FetchOptions = {}): Promis
 export interface User {
   id: string;
   username: string;
+  full_name: string;
   email: string;
   created_at: string;
 }
@@ -44,10 +47,10 @@ export interface AuthResponse {
   user: User;
 }
 
-export function register(username: string, email: string, password: string) {
+export function register(username: string, fullName: string, email: string, password: string) {
   return apiFetch<AuthResponse>("/api/auth/register", {
     method: "POST",
-    body: { username, email, password },
+    body: { username, full_name: fullName, email, password },
   });
 }
 
@@ -84,12 +87,24 @@ export function getPlayer(id: string) {
 }
 
 // Teams
+export type Position = "GK" | "DEF" | "MID" | "FWD";
+
+export interface StarterAssignment {
+  player_id: string;
+  assigned_position: Position;
+}
+
+export interface StarterPlayer extends Player {
+  assigned_position: Position;
+}
+
 export interface FantasyTeam {
   id: string;
   user_id: string;
   name: string;
+  captain_id: string | null;
   created_at: string;
-  players: Player[];
+  players: StarterPlayer[];
   bench: Player[];
   total_points: number;
 }
@@ -106,10 +121,16 @@ export function getMyTeam(token: string) {
   return apiFetch<FantasyTeam>("/api/teams/my", { token });
 }
 
-export function setTeamPlayers(teamId: string, playerIds: string[], benchPlayerIds: string[], token: string) {
+export function setTeamPlayers(
+  teamId: string,
+  starters: StarterAssignment[],
+  benchPlayerIds: string[],
+  captainId: string,
+  token: string
+) {
   return apiFetch<FantasyTeam>(`/api/teams/${teamId}/players`, {
     method: "PUT",
-    body: { player_ids: playerIds, bench_player_ids: benchPlayerIds },
+    body: { starters, bench_player_ids: benchPlayerIds, captain_id: captainId },
     token,
   });
 }

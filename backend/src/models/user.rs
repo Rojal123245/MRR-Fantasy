@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub struct User {
     pub id: Uuid,
     pub username: String,
+    pub full_name: String,
     pub email: String,
     pub password_hash: String,
     pub created_at: DateTime<Utc>,
@@ -17,6 +18,7 @@ pub struct User {
 pub struct UserResponse {
     pub id: Uuid,
     pub username: String,
+    pub full_name: String,
     pub email: String,
     pub created_at: DateTime<Utc>,
 }
@@ -26,6 +28,7 @@ impl From<User> for UserResponse {
         Self {
             id: u.id,
             username: u.username,
+            full_name: u.full_name,
             email: u.email,
             created_at: u.created_at,
         }
@@ -36,6 +39,7 @@ impl From<User> for UserResponse {
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
     pub username: String,
+    pub full_name: String,
     pub email: String,
     pub password: String,
 }

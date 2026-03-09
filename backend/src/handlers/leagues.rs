@@ -16,7 +16,9 @@ use crate::models::{
 fn generate_invite_code() -> String {
     let mut rng = rand::thread_rng();
     let chars: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".chars().collect();
-    (0..8).map(|_| chars[rng.gen_range(0..chars.len())]).collect()
+    (0..8)
+        .map(|_| chars[rng.gen_range(0..chars.len())])
+        .collect()
 }
 
 /// POST /api/leagues
@@ -28,7 +30,9 @@ pub async fn create_league(
     Json(body): Json<CreateLeagueRequest>,
 ) -> AppResult<Json<League>> {
     if body.name.is_empty() {
-        return Err(AppError::BadRequest("League name cannot be empty".to_string()));
+        return Err(AppError::BadRequest(
+            "League name cannot be empty".to_string(),
+        ));
     }
 
     let invite_code = generate_invite_code();
@@ -84,7 +88,9 @@ pub async fn join_league(
     .await?;
 
     if already_member > 0 {
-        return Err(AppError::Conflict("You are already a member of this league".to_string()));
+        return Err(AppError::Conflict(
+            "You are already a member of this league".to_string(),
+        ));
     }
 
     sqlx::query("INSERT INTO league_members (league_id, user_id) VALUES ($1, $2)")

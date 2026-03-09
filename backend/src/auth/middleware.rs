@@ -1,9 +1,4 @@
-use axum::{
-    extract::Request,
-    http::header::AUTHORIZATION,
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::Request, http::header::AUTHORIZATION, middleware::Next, response::Response};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -20,10 +15,7 @@ pub struct AuthUser {
 ///
 /// Extracts the `Authorization: Bearer <token>` header, validates it,
 /// and injects `AuthUser` into request extensions.
-pub async fn auth_middleware(
-    mut req: Request,
-    next: Next,
-) -> Result<Response, AppError> {
+pub async fn auth_middleware(mut req: Request, next: Next) -> Result<Response, AppError> {
     let jwt_secret = req
         .extensions()
         .get::<String>()
