@@ -3,28 +3,46 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Plus, ArrowRight, Copy, Check, AlertCircle, Trophy, Crown } from "lucide-react";
+import { Users, Plus, ArrowRight, Copy, Check, AlertCircle, Trophy, Crown, Shield } from "lucide-react";
 import Nav from "@/components/nav";
-import { createLeague, joinLeague, getLeague, type League, type LeagueDetail } from "@/lib/api";
+import { createLeague, joinLeague, getLeague, getMyLeagues, type League, type LeagueDetail, type MyLeague } from "@/lib/api";
 import { getToken, isAuthenticated } from "@/lib/auth";
 
 export default function LeaguePage() {
   const router = useRouter();
-  const [tab, setTab] = useState<"create" | "join" | "view">("create");
+  const [tab, setTab] = useState<"my" | "create" | "join" | "view">("my");
   const [leagueName, setLeagueName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [createdLeague, setCreatedLeague] = useState<League | null>(null);
   const [joinedLeague, setJoinedLeague] = useState<League | null>(null);
   const [leagueDetail, setLeagueDetail] = useState<LeagueDetail | null>(null);
+  const [myLeagues, setMyLeagues] = useState<MyLeague[]>([]);
+  const [myLeaguesLoading, setMyLeaguesLoading] = useState(true);
   const [viewLeagueId, setViewLeagueId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
+  const loadMyLeagues = async () => {
+    const token = getToken();
+    if (!token) return;
+    setMyLeaguesLoading(true);
+    try {
+      const leagues = await getMyLeagues(token);
+      setMyLeagues(leagues);
+    } catch {
+      // silently fail - user may not have leagues
+    } finally {
+      setMyLeaguesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
+      return;
     }
+    loadMyLeagues();
   }, [router]);
 
   const handleCreateLeague = async (e: React.FormEvent) => {
@@ -39,6 +57,7 @@ export default function LeaguePage() {
       const league = await createLeague(leagueName, token);
       setCreatedLeague(league);
       setLeagueName("");
+      loadMyLeagues();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create league");
     } finally {
@@ -58,6 +77,7 @@ export default function LeaguePage() {
       const league = await joinLeague(inviteCode.toUpperCase(), token);
       setJoinedLeague(league);
       setInviteCode("");
+      loadMyLeagues();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to join league");
     } finally {
@@ -101,8 +121,9 @@ export default function LeaguePage() {
         </motion.div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-8">
+        <div className="flex gap-2 mb-8 flex-wrap">
           {[
+            { id: "my" as const, label: "My Leagues", icon: Shield },
             { id: "create" as const, label: "Create League", icon: Plus },
             { id: "join" as const, label: "Join League", icon: ArrowRight },
           ].map((t) => {
@@ -140,6 +161,72 @@ export default function LeaguePage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* My Leagues */}
+        {tab === "my" && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(0, 230, 118, 0.1)" }}>
+                <Shield size={20} style={{ color: "var(--accent-green)" }} />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold" style={{ fontFamily: "var(--font-display)" }}>My Leagues</h2>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>Leagues you&apos;ve joined or created</p>
+              </div>
+            </div>
+
+            {myLeaguesLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "var(--accent-green)", borderTopColor: "transparent" }} />
+              </div>
+            ) : myLeagues.length === 0 ? (
+              <div className="glass-card p-8 text-center">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: "rgba(255, 171, 0, 0.08)" }}>
+                  <Users size={28} style={{ color: "var(--accent-amber)" }} />
+                </div>
+                <p className="text-lg font-bold mb-2" style={{ fontFamily: "var(--font-display)" }}>No Leagues Yet</p>
+                <p className="text-sm mb-4" style={{ color: "var(--text-muted)" }}>Create a league or join one with an invite code</p>
+                <div className="flex gap-3 justify-center">
+                  <button onClick={() => setTab("create")} className="btn-primary text-sm">Create League</button>
+                  <button onClick={() => setTab("join")} className="btn-secondary text-sm">Join League</button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {myLeagues.map((league, i) => (
+                  <motion.div
+                    key={league.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="glass-card p-5 cursor-pointer hover:scale-[1.01] transition-transform"
+                    onClick={() => handleViewLeague(league.id)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(255, 171, 0, 0.1)" }}>
+                          <Trophy size={18} style={{ color: "var(--accent-amber)" }} />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold" style={{ fontFamily: "var(--font-display)" }}>{league.name}</h3>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                              <Users size={12} className="inline mr-1" />{league.member_count} member{league.member_count !== 1 ? "s" : ""}
+                            </span>
+                            <span className="text-xs" style={{ color: "var(--accent-amber)", fontFamily: "var(--font-display)" }}>
+                              {league.invite_code}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <ArrowRight size={16} style={{ color: "var(--text-muted)" }} />
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
 
         {/* Create League */}
         {tab === "create" && (

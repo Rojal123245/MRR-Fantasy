@@ -28,6 +28,16 @@ pub struct LeagueDetail {
     pub members: Vec<LeagueMemberStanding>,
 }
 
+/// Summary of a league the user belongs to.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct MyLeague {
+    pub id: Uuid,
+    pub name: String,
+    pub invite_code: String,
+    pub member_count: i64,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Request to create a league.
 #[derive(Debug, Deserialize)]
 pub struct CreateLeagueRequest {

@@ -9,7 +9,7 @@ use crate::auth::handler::AppState;
 use crate::auth::middleware::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    CreateLeagueRequest, JoinLeagueRequest, League, LeagueDetail, LeagueMemberStanding,
+    CreateLeagueRequest, JoinLeagueRequest, League, LeagueDetail, LeagueMemberStanding, MyLeague,
 };
 
 /// Generate a random 8-character alphanumeric invite code.
@@ -100,6 +100,32 @@ pub async fn join_league(
         .await?;
 
     Ok(Json(league))
+}
+
+/// GET /api/leagues/my
+///
+/// List all leagues the authenticated user belongs to.
+pub async fn get_my_leagues(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+) -> AppResult<Json<Vec<MyLeague>>> {
+    let leagues = sqlx::query_as::<_, MyLeague>(
+        r#"SELECT
+             l.id,
+             l.name,
+             l.invite_code,
+             (SELECT COUNT(*) FROM league_members lm2 WHERE lm2.league_id = l.id) AS member_count,
+             l.created_at
+           FROM league_members lm
+           INNER JOIN leagues l ON l.id = lm.league_id
+           WHERE lm.user_id = $1
+           ORDER BY l.created_at DESC"#,
+    )
+    .bind(auth.user_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(leagues))
 }
 
 /// GET /api/leagues/:id

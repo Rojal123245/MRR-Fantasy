@@ -2,6 +2,9 @@ use axum::{
     extract::{Extension, Path, State},
     Json,
 };
+use chrono::{Datelike, Timelike, Utc};
+use chrono_tz::America::New_York;
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::auth::handler::AppState;
@@ -11,6 +14,45 @@ use crate::models::{
     CreateTeamRequest, FantasyTeam, FantasyTeamWithPlayers, Player, PlayerPosition,
     SetPlayersRequest, StarterPlayer,
 };
+
+#[derive(Debug, Serialize)]
+pub struct LockStatusResponse {
+    pub locked: bool,
+    pub unlock_at: Option<String>,
+}
+
+fn compute_lock_status() -> LockStatusResponse {
+    let now_et = Utc::now().with_timezone(&New_York);
+    let weekday = now_et.weekday();
+
+    let locked = matches!(weekday, chrono::Weekday::Sat)
+        || (matches!(weekday, chrono::Weekday::Sun) && now_et.hour() < 12);
+
+    let unlock_at = if locked {
+        let days_until_sunday = if matches!(weekday, chrono::Weekday::Sat) { 1 } else { 0 };
+        let unlock = (now_et + chrono::Duration::days(days_until_sunday))
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .map(|dt| {
+                dt.and_local_timezone(New_York)
+                    .single()
+                    .map(|t| t.to_rfc3339())
+            })
+            .flatten();
+        unlock
+    } else {
+        None
+    };
+
+    LockStatusResponse { locked, unlock_at }
+}
+
+/// GET /api/teams/lock-status
+///
+/// Returns whether lineup changes are currently locked.
+pub async fn lock_status() -> AppResult<Json<LockStatusResponse>> {
+    Ok(Json(compute_lock_status()))
+}
 
 /// POST /api/teams
 ///
@@ -177,6 +219,13 @@ pub async fn set_team_players(
     Path(team_id): Path<Uuid>,
     Json(body): Json<SetPlayersRequest>,
 ) -> AppResult<Json<FantasyTeamWithPlayers>> {
+    let lock = compute_lock_status();
+    if lock.locked {
+        return Err(AppError::BadRequest(
+            "Lineup changes are locked from Saturday midnight to Sunday 12:00 PM ET".to_string(),
+        ));
+    }
+
     // Validate exactly 6 starters
     if body.starters.len() != 6 {
         return Err(AppError::BadRequest(

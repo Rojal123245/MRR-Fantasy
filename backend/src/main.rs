@@ -75,6 +75,7 @@ async fn main() {
     // Player routes (public)
     let player_routes = Router::new()
         .route("/", get(handlers::players::list_players))
+        .route("/leaderboard", get(handlers::players::leaderboard))
         .route("/:id", get(handlers::players::get_player));
 
     // Points routes (public)
@@ -82,14 +83,21 @@ async fn main() {
         .route("/week/:week", get(handlers::points::get_week_points))
         .route("/player/:id", get(handlers::points::get_player_points));
 
-    // Team routes (all protected)
-    let team_routes = Router::new()
+    // Team routes (mixed: lock-status is public, rest protected)
+    let team_public_routes = Router::new()
+        .route("/lock-status", get(handlers::teams::lock_status));
+
+    let team_protected_routes = Router::new()
         .route("/", post(handlers::teams::create_team))
         .route("/my", get(handlers::teams::get_my_team))
         .route("/:id/players", put(handlers::teams::set_team_players))
         .route("/:id/points", get(handlers::teams::get_team_points))
         .layer(middleware::from_fn(auth::middleware::auth_middleware))
         .layer(Extension(config.jwt_secret.clone()));
+
+    let team_routes = Router::new()
+        .merge(team_public_routes)
+        .merge(team_protected_routes);
 
     // League routes (mixed: some public, some protected)
     let league_public_routes = Router::new()
@@ -99,6 +107,7 @@ async fn main() {
     let league_protected_routes = Router::new()
         .route("/", post(handlers::leagues::create_league))
         .route("/join", post(handlers::leagues::join_league))
+        .route("/my", get(handlers::leagues::get_my_leagues))
         .layer(middleware::from_fn(auth::middleware::auth_middleware))
         .layer(Extension(config.jwt_secret.clone()));
 

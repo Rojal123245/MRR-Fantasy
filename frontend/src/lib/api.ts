@@ -180,6 +180,51 @@ export function getLeaderboard(leagueId: string) {
   return apiFetch<LeagueMember[]>(`/api/leagues/${leagueId}/leaderboard`);
 }
 
+export interface MyLeague {
+  id: string;
+  name: string;
+  invite_code: string;
+  member_count: number;
+  created_at: string;
+}
+
+export function getMyLeagues(token: string) {
+  return apiFetch<MyLeague[]>("/api/leagues/my", { token });
+}
+
+// Lock status
+export interface LockStatus {
+  locked: boolean;
+  unlock_at: string | null;
+}
+
+export function getLockStatus() {
+  return apiFetch<LockStatus>("/api/teams/lock-status");
+}
+
+// Player leaderboard with aggregated stats
+export interface PlayerLeaderboard {
+  id: string;
+  name: string;
+  position: "GK" | "DEF" | "MID" | "FWD";
+  team_name: string;
+  photo_url: string | null;
+  is_top_player: boolean;
+  goals: number;
+  assists: number;
+  clean_sheets: number;
+  saves: number;
+  total_points: number;
+  chosen_by_percent: number;
+}
+
+export function getPlayerLeaderboard(position?: string) {
+  const params = new URLSearchParams();
+  if (position) params.set("position", position);
+  const qs = params.toString();
+  return apiFetch<PlayerLeaderboard[]>(`/api/players/leaderboard${qs ? `?${qs}` : ""}`);
+}
+
 // Points
 export interface PlayerPointsDisplay {
   player_id: string;
