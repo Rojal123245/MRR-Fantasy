@@ -115,6 +115,16 @@ async fn main() {
         .merge(league_public_routes)
         .merge(league_protected_routes);
 
+    // Admin routes (protected by both auth + admin middleware)
+    let admin_routes = Router::new()
+        .route("/gameweek", post(handlers::admin::create_gameweek))
+        .route("/gameweek/:week/stats", get(handlers::admin::get_week_stats))
+        .route("/gameweek/:week/stats", post(handlers::admin::submit_week_stats))
+        .layer(middleware::from_fn(auth::admin::admin_middleware))
+        .layer(middleware::from_fn(auth::middleware::auth_middleware))
+        .layer(Extension(state.pool.clone()))
+        .layer(Extension(config.jwt_secret.clone()));
+
     // Compose all routes under /api
     let app = Router::new()
         .route("/healthz", get(health_check))
@@ -123,6 +133,7 @@ async fn main() {
         .nest("/api/points", points_routes)
         .nest("/api/teams", team_routes)
         .nest("/api/leagues", league_routes)
+        .nest("/api/admin", admin_routes)
         .layer(cors)
         .with_state(state);
 

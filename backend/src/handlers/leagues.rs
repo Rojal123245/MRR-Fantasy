@@ -148,12 +148,38 @@ pub async fn get_league(
              u.id AS user_id,
              u.username,
              ft.name AS team_name,
-             COALESCE(SUM(p.total_points), 0) AS total_points
+             COALESCE(SUM(
+               (
+                 CASE tp.assigned_position::text
+                   WHEN 'GK'  THEN pp.goals * 10
+                   WHEN 'DEF' THEN pp.goals * 6
+                   WHEN 'MID' THEN pp.goals * 5
+                   WHEN 'FWD' THEN pp.goals * 4
+                   ELSE 0
+                 END
+                 + pp.assists * 5
+                 + CASE tp.assigned_position::text
+                     WHEN 'GK'  THEN pp.clean_sheets * 10
+                     WHEN 'DEF' THEN pp.clean_sheets * 6
+                     ELSE 0
+                   END
+                 + CASE WHEN tp.assigned_position::text = 'GK' THEN pp.saves / 5 ELSE 0 END
+                 + pp.penalty_saves * 8
+                 + CASE WHEN pp.minutes_played >= 35 THEN 2
+                        WHEN pp.minutes_played >= 1  THEN 1
+                        ELSE 0 END
+                 - pp.own_goals * 2
+                 - pp.penalty_misses * 2
+                 - pp.regular_fouls * 1
+                 - pp.serious_fouls * 3
+               )
+               * CASE WHEN tp.player_id = ft.captain_id THEN 2 ELSE 1 END
+             ), 0) AS total_points
            FROM league_members lm
            INNER JOIN users u ON u.id = lm.user_id
            LEFT JOIN fantasy_teams ft ON ft.user_id = u.id
-           LEFT JOIN team_players tp ON tp.team_id = ft.id
-           LEFT JOIN players p ON p.id = tp.player_id
+           LEFT JOIN team_players tp ON tp.team_id = ft.id AND tp.is_bench = false
+           LEFT JOIN player_points pp ON pp.player_id = tp.player_id
            WHERE lm.league_id = $1
            GROUP BY u.id, u.username, ft.name
            ORDER BY total_points DESC"#,
@@ -177,12 +203,38 @@ pub async fn get_leaderboard(
              u.id AS user_id,
              u.username,
              ft.name AS team_name,
-             COALESCE(SUM(p.total_points), 0) AS total_points
+             COALESCE(SUM(
+               (
+                 CASE tp.assigned_position::text
+                   WHEN 'GK'  THEN pp.goals * 10
+                   WHEN 'DEF' THEN pp.goals * 6
+                   WHEN 'MID' THEN pp.goals * 5
+                   WHEN 'FWD' THEN pp.goals * 4
+                   ELSE 0
+                 END
+                 + pp.assists * 5
+                 + CASE tp.assigned_position::text
+                     WHEN 'GK'  THEN pp.clean_sheets * 10
+                     WHEN 'DEF' THEN pp.clean_sheets * 6
+                     ELSE 0
+                   END
+                 + CASE WHEN tp.assigned_position::text = 'GK' THEN pp.saves / 5 ELSE 0 END
+                 + pp.penalty_saves * 8
+                 + CASE WHEN pp.minutes_played >= 35 THEN 2
+                        WHEN pp.minutes_played >= 1  THEN 1
+                        ELSE 0 END
+                 - pp.own_goals * 2
+                 - pp.penalty_misses * 2
+                 - pp.regular_fouls * 1
+                 - pp.serious_fouls * 3
+               )
+               * CASE WHEN tp.player_id = ft.captain_id THEN 2 ELSE 1 END
+             ), 0) AS total_points
            FROM league_members lm
            INNER JOIN users u ON u.id = lm.user_id
            LEFT JOIN fantasy_teams ft ON ft.user_id = u.id
-           LEFT JOIN team_players tp ON tp.team_id = ft.id
-           LEFT JOIN players p ON p.id = tp.player_id
+           LEFT JOIN team_players tp ON tp.team_id = ft.id AND tp.is_bench = false
+           LEFT JOIN player_points pp ON pp.player_id = tp.player_id
            WHERE lm.league_id = $1
            GROUP BY u.id, u.username, ft.name
            ORDER BY total_points DESC"#,
