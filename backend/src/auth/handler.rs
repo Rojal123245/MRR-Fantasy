@@ -70,7 +70,7 @@ pub async fn register(
         r#"
         INSERT INTO users (username, full_name, email, password_hash)
         VALUES ($1, $2, $3, $4)
-        RETURNING id, username, full_name, email, password_hash, created_at
+        RETURNING id, username, full_name, email, password_hash, is_admin, created_at
         "#,
     )
     .bind(&body.username)
@@ -97,7 +97,7 @@ pub async fn login(
     Json(body): Json<LoginRequest>,
 ) -> AppResult<Json<AuthResponse>> {
     let user = sqlx::query_as::<_, User>(
-        "SELECT id, username, full_name, email, password_hash, created_at FROM users WHERE email = $1",
+        "SELECT id, username, full_name, email, password_hash, is_admin, created_at FROM users WHERE email = $1",
     )
     .bind(&body.email)
     .fetch_optional(&state.pool)

@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Trophy, Users, Shield, LayoutDashboard, LogOut, Menu, X } from "lucide-react";
+import { Trophy, Users, Shield, LayoutDashboard, LogOut, Menu, X, Settings } from "lucide-react";
 import { getUser, clearAuth, isAuthenticated } from "@/lib/auth";
 import type { User } from "@/lib/api";
 
-const navLinks = [
+const baseNavLinks = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/team", label: "My Team", icon: Shield },
   { href: "/league", label: "Leagues", icon: Users },
@@ -26,6 +26,10 @@ export default function Nav() {
       setUser(getUser());
     }
   }, []);
+
+  const navLinks = user?.is_admin
+    ? [...baseNavLinks, { href: "/admin", label: "Admin", icon: Settings }]
+    : baseNavLinks;
 
   const handleLogout = () => {
     clearAuth();

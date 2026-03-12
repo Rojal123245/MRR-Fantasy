@@ -39,6 +39,7 @@ export interface User {
   username: string;
   full_name: string;
   email: string;
+  is_admin: boolean;
   created_at: string;
 }
 
@@ -245,4 +246,74 @@ export function getWeekPoints(week: number) {
 
 export function getPlayerPoints(playerId: string) {
   return apiFetch<PlayerPointsDisplay[]>(`/api/points/player/${playerId}`);
+}
+
+// Admin
+export interface MatchWeek {
+  id: string;
+  week_number: number;
+  start_date: string;
+  end_date: string;
+  is_active: boolean;
+}
+
+export interface AdminPlayerStats {
+  player_id: string;
+  player_name: string;
+  position: string;
+  goals: number;
+  assists: number;
+  clean_sheets: number;
+  saves: number;
+  penalty_saves: number;
+  own_goals: number;
+  penalty_misses: number;
+  regular_fouls: number;
+  serious_fouls: number;
+  minutes_played: number;
+  total_points: number;
+}
+
+export interface PlayerStatInput {
+  player_id: string;
+  goals: number;
+  assists: number;
+  clean_sheets: number;
+  saves: number;
+  penalty_saves: number;
+  own_goals: number;
+  penalty_misses: number;
+  regular_fouls: number;
+  serious_fouls: number;
+  minutes_played: number;
+}
+
+export function createGameweek(
+  weekNumber: number,
+  startDate: string,
+  endDate: string,
+  token: string
+) {
+  return apiFetch<MatchWeek>("/api/admin/gameweek", {
+    method: "POST",
+    body: { week_number: weekNumber, start_date: startDate, end_date: endDate },
+    token,
+  });
+}
+
+export function getWeekStatsAdmin(week: number, token: string) {
+  return apiFetch<AdminPlayerStats[]>(`/api/admin/gameweek/${week}/stats`, {
+    token,
+  });
+}
+
+export function submitWeekStats(
+  week: number,
+  stats: PlayerStatInput[],
+  token: string
+) {
+  return apiFetch<{ ok: boolean; players_updated: number; week: number }>(
+    `/api/admin/gameweek/${week}/stats`,
+    { method: "POST", body: stats, token }
+  );
 }

@@ -1,51 +1,70 @@
 use crate::models::PlayerPosition;
 
-/// Points calculation engine for MRR Fantasy.
-///
-/// Calculates total fantasy points for a player based on their
-/// performance stats and position.
 pub struct PointsEngine;
 
 impl PointsEngine {
     /// Calculate total fantasy points for a player in a match week.
     ///
-    /// # Points System
-    /// - Goal (FWD): +10
-    /// - Goal (MID): +8
-    /// - Goal (DEF/GK): +12
-    /// - Assist: +5
-    /// - Clean Sheet (DEF/GK): +6
-    /// - Save (GK): +2 per save
-    /// - Tackle won: +2
+    /// Scoring per MRR Fantasy rules:
+    /// - Goals: GK=10, DEF=6, MID=5, FWD=4
+    /// - Assists: 5 pts each
+    /// - Clean Sheets: GK=10, DEF=6
+    /// - Saves (GK only): 1 pt per 5 saves
+    /// - Penalty Save: +8
+    /// - Minutes: 35+ = 2, 1-34 = 1
+    /// - Regular Foul: -1
+    /// - Serious Foul: -3
+    /// - Own Goal: -2
+    /// - Penalty Miss: -2
     pub fn calculate(
         position: &PlayerPosition,
         goals: i32,
         assists: i32,
         clean_sheets: i32,
         saves: i32,
-        tackles: i32,
+        penalty_saves: i32,
+        own_goals: i32,
+        penalty_misses: i32,
+        regular_fouls: i32,
+        serious_fouls: i32,
+        minutes_played: i32,
     ) -> i32 {
-        let goal_points = match position {
-            PlayerPosition::Fwd => goals * 10,
-            PlayerPosition::Mid => goals * 8,
-            PlayerPosition::Def | PlayerPosition::Gk => goals * 12,
-        };
+        let goal_pts = goals
+            * match position {
+                PlayerPosition::Gk => 10,
+                PlayerPosition::Def => 6,
+                PlayerPosition::Mid => 5,
+                PlayerPosition::Fwd => 4,
+            };
 
-        let assist_points = assists * 5;
+        let assist_pts = assists * 5;
 
-        let clean_sheet_points = match position {
-            PlayerPosition::Def | PlayerPosition::Gk => clean_sheets * 6,
+        let cs_pts = clean_sheets
+            * match position {
+                PlayerPosition::Gk => 10,
+                PlayerPosition::Def => 6,
+                _ => 0,
+            };
+
+        let save_pts = match position {
+            PlayerPosition::Gk => saves / 5,
             _ => 0,
         };
 
-        let save_points = match position {
-            PlayerPosition::Gk => saves * 2,
-            _ => 0,
+        let pen_save_pts = penalty_saves * 8;
+
+        let minutes_pts = if minutes_played >= 35 {
+            2
+        } else if minutes_played >= 1 {
+            1
+        } else {
+            0
         };
 
-        let tackle_points = tackles * 2;
+        let negative =
+            own_goals * -2 + penalty_misses * -2 + regular_fouls * -1 + serious_fouls * -3;
 
-        goal_points + assist_points + clean_sheet_points + save_points + tackle_points
+        goal_pts + assist_pts + cs_pts + save_pts + pen_save_pts + minutes_pts + negative
     }
 }
 
@@ -55,42 +74,81 @@ mod tests {
 
     #[test]
     fn test_forward_goal_points() {
-        let pts = PointsEngine::calculate(&PlayerPosition::Fwd, 2, 1, 0, 0, 0);
-        // 2 goals * 10 + 1 assist * 5 = 25
-        assert_eq!(pts, 25);
+        let pts = PointsEngine::calculate(
+            &PlayerPosition::Fwd,
+            2, 1, 0, 0, 0, 0, 0, 0, 0, 60,
+        );
+        // 2 goals * 4 + 1 assist * 5 + 2 (minutes 60) = 15
+        assert_eq!(pts, 15);
     }
 
     #[test]
-    fn test_midfielder_goal_points() {
-        let pts = PointsEngine::calculate(&PlayerPosition::Mid, 1, 2, 0, 0, 1);
-        // 1 goal * 8 + 2 assists * 5 + 1 tackle * 2 = 20
-        assert_eq!(pts, 20);
+    fn test_midfielder_goal_and_assist() {
+        let pts = PointsEngine::calculate(
+            &PlayerPosition::Mid,
+            1, 2, 0, 0, 0, 0, 0, 0, 0, 50,
+        );
+        // 1 goal * 5 + 2 assists * 5 + 2 (minutes 50) = 17
+        assert_eq!(pts, 17);
     }
 
     #[test]
     fn test_defender_clean_sheet() {
-        let pts = PointsEngine::calculate(&PlayerPosition::Def, 0, 0, 1, 0, 3);
-        // 0 goals + 0 assists + 1 cs * 6 + 3 tackles * 2 = 12
-        assert_eq!(pts, 12);
+        let pts = PointsEngine::calculate(
+            &PlayerPosition::Def,
+            0, 0, 1, 0, 0, 0, 0, 0, 0, 60,
+        );
+        // 1 cs * 6 + 2 (minutes 60) = 8
+        assert_eq!(pts, 8);
     }
 
     #[test]
     fn test_goalkeeper_saves() {
-        let pts = PointsEngine::calculate(&PlayerPosition::Gk, 0, 0, 1, 5, 0);
-        // 0 goals + 0 assists + 1 cs * 6 + 5 saves * 2 = 16
-        assert_eq!(pts, 16);
+        let pts = PointsEngine::calculate(
+            &PlayerPosition::Gk,
+            0, 0, 1, 10, 0, 0, 0, 0, 0, 60,
+        );
+        // 1 cs * 10 + 10/5=2 saves + 2 (minutes 60) = 14
+        assert_eq!(pts, 14);
     }
 
     #[test]
     fn test_goalkeeper_heroic_goal() {
-        let pts = PointsEngine::calculate(&PlayerPosition::Gk, 1, 0, 1, 3, 0);
-        // 1 goal * 12 + 1 cs * 6 + 3 saves * 2 = 24
-        assert_eq!(pts, 24);
+        let pts = PointsEngine::calculate(
+            &PlayerPosition::Gk,
+            1, 0, 1, 5, 1, 0, 0, 0, 0, 60,
+        );
+        // 1 goal * 10 + 1 cs * 10 + 5/5=1 save + 1 pen_save * 8 + 2 (minutes) = 31
+        assert_eq!(pts, 31);
     }
 
     #[test]
     fn test_zero_stats() {
-        let pts = PointsEngine::calculate(&PlayerPosition::Fwd, 0, 0, 0, 0, 0);
+        let pts = PointsEngine::calculate(
+            &PlayerPosition::Fwd,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        );
         assert_eq!(pts, 0);
+    }
+
+    #[test]
+    fn test_negative_points() {
+        let pts = PointsEngine::calculate(
+            &PlayerPosition::Mid,
+            0, 0, 0, 0, 0, 1, 1, 2, 1, 60,
+        );
+        // 0 goals + 0 assists + 1 OG * -2 + 1 pen_miss * -2 + 2 reg_fouls * -1 + 1 serious * -3 + 2 (mins)
+        // = -2 + -2 + -2 + -3 + 2 = -7
+        assert_eq!(pts, -7);
+    }
+
+    #[test]
+    fn test_low_minutes() {
+        let pts = PointsEngine::calculate(
+            &PlayerPosition::Fwd,
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 20,
+        );
+        // 1 goal * 4 + 1 (minutes 20) = 5
+        assert_eq!(pts, 5);
     }
 }
