@@ -36,6 +36,23 @@ pub struct Player {
     pub created_at: DateTime<Utc>,
 }
 
+/// Player leaderboard row with aggregated stats and selection percentage.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct PlayerLeaderboard {
+    pub id: Uuid,
+    pub name: String,
+    pub position: PlayerPosition,
+    pub team_name: String,
+    pub photo_url: Option<String>,
+    pub is_top_player: bool,
+    pub goals: i64,
+    pub assists: i64,
+    pub clean_sheets: i64,
+    pub saves: i64,
+    pub total_points: i32,
+    pub chosen_by_percent: f64,
+}
+
 /// Query parameters for listing players.
 #[derive(Debug, Deserialize)]
 pub struct PlayerQuery {

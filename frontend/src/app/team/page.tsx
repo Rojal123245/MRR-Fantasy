@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield } from "lucide-react";
+import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield, Lock } from "lucide-react";
 import Nav from "@/components/nav";
 import PlayerCard from "@/components/player-card";
 import Formation, { type FormationPlayer, getFormationLabel, getMissingPositions } from "@/components/formation";
@@ -12,10 +12,12 @@ import {
   getMyTeam,
   createTeam,
   setTeamPlayers,
+  getLockStatus,
   type Player,
   type FantasyTeam,
   type Position,
   type StarterAssignment,
+  type LockStatus,
 } from "@/lib/api";
 import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
@@ -49,6 +51,8 @@ export default function TeamBuilderPage() {
   const [pendingPlayer, setPendingPlayer] = useState<Player | null>(null);
   // Captain state
   const [captainId, setCaptainId] = useState<string | null>(null);
+  // Lineup lock state
+  const [lockStatus, setLockStatus] = useState<LockStatus | null>(null);
 
   const loadData = useCallback(async () => {
     const token = getToken();
@@ -86,6 +90,7 @@ export default function TeamBuilderPage() {
       return;
     }
     loadData();
+    getLockStatus().then(setLockStatus).catch(() => {});
   }, [router, loadData]);
 
   const filteredPlayers = players.filter((p) => {
@@ -121,6 +126,11 @@ export default function TeamBuilderPage() {
   };
 
   const handleSelect = (player: Player) => {
+    if (lockStatus?.locked) {
+      setError("Lineup changes are locked until Sunday 12:00 PM ET");
+      return;
+    }
+
     if (isPlayerInSquad(player)) {
       setError("Player already in your squad");
       return;
@@ -321,11 +331,11 @@ export default function TeamBuilderPage() {
 
           <button
             onClick={handleSave}
-            disabled={saving || !isSquadComplete || isOverBudget}
+            disabled={saving || !isSquadComplete || isOverBudget || lockStatus?.locked}
             className="btn-primary flex items-center gap-2 text-sm disabled:opacity-50"
           >
-            <Save size={16} />
-            {saving ? "Saving..." : "Save Team"}
+            {lockStatus?.locked ? <Lock size={16} /> : <Save size={16} />}
+            {lockStatus?.locked ? "Locked" : saving ? "Saving..." : "Save Team"}
           </button>
         </motion.div>
 
@@ -371,6 +381,29 @@ export default function TeamBuilderPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Lineup Lock Banner */}
+        {lockStatus?.locked && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3 p-4 rounded-lg mb-6"
+            style={{
+              background: "rgba(255, 171, 0, 0.1)",
+              border: "1px solid rgba(255, 171, 0, 0.3)",
+            }}
+          >
+            <Lock size={20} style={{ color: "var(--accent-amber)", flexShrink: 0 }} />
+            <div>
+              <p className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-amber)" }}>
+                LINEUP LOCKED
+              </p>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Lineup changes are locked from Saturday midnight to Sunday 12:00 PM ET
+              </p>
+            </div>
+          </motion.div>
+        )}
 
         {/* Position Picker Modal */}
         <AnimatePresence>
