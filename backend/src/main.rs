@@ -134,6 +134,8 @@ async fn main() {
     // Admin routes (protected by both auth + admin middleware)
     let admin_routes = Router::new()
         .route("/gameweek", post(handlers::admin::create_gameweek))
+        .route("/gameweeks", get(handlers::admin::get_gameweeks))
+        .route("/gameweek/:week/toggle", put(handlers::admin::toggle_gameweek))
         .route("/gameweek/:week/stats", get(handlers::admin::get_week_stats))
         .route("/gameweek/:week/stats", post(handlers::admin::submit_week_stats))
         .layer(middleware::from_fn(auth::admin::admin_middleware))

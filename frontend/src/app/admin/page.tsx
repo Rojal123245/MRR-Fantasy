@@ -9,8 +9,11 @@ import {
   createGameweek,
   getWeekStatsAdmin,
   submitWeekStats,
+  getGameweeks,
+  toggleGameweek,
   type AdminPlayerStats,
   type PlayerStatInput,
+  type MatchWeek,
 } from "@/lib/api";
 import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
@@ -46,6 +49,22 @@ export default function AdminPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [creating, setCreating] = useState(false);
+  const [gameweeks, setGameweeks] = useState<MatchWeek[]>([]);
+  const [toggling, setToggling] = useState(false);
+
+  const activeGameweek = gameweeks.find((gw) => gw.is_active) ?? null;
+  const selectedGameweek = gameweeks.find((gw) => gw.week_number === weekNumber) ?? null;
+
+  const loadGameweeks = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const data = await getGameweeks(token);
+      setGameweeks(data);
+    } catch {
+      // Gameweeks not loaded yet
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -57,7 +76,8 @@ export default function AdminPage() {
       router.push("/dashboard");
       return;
     }
-  }, [router]);
+    loadGameweeks();
+  }, [router, loadGameweeks]);
 
   const loadStats = useCallback(async () => {
     const token = getToken();
@@ -102,9 +122,9 @@ export default function AdminPage() {
     try {
       const today = new Date().toISOString().split("T")[0];
       await createGameweek(weekNumber, today, today, token);
-      setSuccess(`Gameweek ${weekNumber} created`);
+      setSuccess(`Gameweek ${weekNumber} created & activated`);
       setTimeout(() => setSuccess(""), 3000);
-      await loadStats();
+      await Promise.all([loadStats(), loadGameweeks()]);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create gameweek");
     } finally {
@@ -120,6 +140,27 @@ export default function AdminPage() {
         [field]: value,
       },
     }));
+  };
+
+  const handleToggle = async () => {
+    const token = getToken();
+    if (!token) return;
+    setToggling(true);
+    setError("");
+    try {
+      const updated = await toggleGameweek(weekNumber, token);
+      setSuccess(
+        updated.is_active
+          ? `Gameweek ${weekNumber} activated — teams are now locked to transfers only`
+          : `Gameweek ${weekNumber} deactivated — teams can be freely modified`
+      );
+      setTimeout(() => setSuccess(""), 4000);
+      await loadGameweeks();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to toggle gameweek");
+    } finally {
+      setToggling(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -249,6 +290,118 @@ export default function AdminPage() {
             {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
             Create / Activate GW {weekNumber}
           </button>
+        </motion.div>
+
+        {/* Gameweek activation control */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="mb-8 p-5 rounded-2xl"
+          style={{
+            background: "var(--bg-card)",
+            border: `1px solid ${activeGameweek ? "rgba(0, 230, 118, 0.3)" : "var(--border-color)"}`,
+          }}
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <div
+              className="w-2 h-2 rounded-full"
+              style={{
+                background: activeGameweek ? "var(--accent-green)" : "var(--text-muted)",
+                boxShadow: activeGameweek ? "0 0 8px rgba(0,230,118,0.5)" : "none",
+              }}
+            />
+            <h3
+              className="text-sm font-bold tracking-wider"
+              style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}
+            >
+              GAMEWEEK STATUS
+            </h3>
+            {activeGameweek && (
+              <span
+                className="ml-auto text-xs px-2.5 py-1 rounded-full font-bold"
+                style={{
+                  background: "rgba(0, 230, 118, 0.12)",
+                  color: "var(--accent-green)",
+                  fontFamily: "var(--font-display)",
+                }}
+              >
+                GW {activeGameweek.week_number} ACTIVE
+              </span>
+            )}
+            {!activeGameweek && (
+              <span
+                className="ml-auto text-xs px-2.5 py-1 rounded-full font-bold"
+                style={{
+                  background: "rgba(255, 171, 0, 0.1)",
+                  color: "var(--accent-amber)",
+                  fontFamily: "var(--font-display)",
+                }}
+              >
+                NO ACTIVE GAMEWEEK
+              </span>
+            )}
+          </div>
+
+          <p
+            className="text-xs mb-4"
+            style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}
+          >
+            {activeGameweek
+              ? "Teams are locked — players can only rearrange their squad or use 1 free transfer per gameweek."
+              : "No gameweek is active — players can freely build and modify their teams without restrictions."}
+          </p>
+
+          {/* Toggle for selected gameweek */}
+          <div
+            className="flex items-center justify-between p-3 rounded-xl"
+            style={{
+              background: "var(--bg-elevated)",
+              border: "1px solid var(--border-color)",
+            }}
+          >
+            <div>
+              <p
+                className="text-sm font-bold"
+                style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}
+              >
+                Gameweek {weekNumber}
+              </p>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                {selectedGameweek
+                  ? selectedGameweek.is_active
+                    ? "Currently active"
+                    : "Created but inactive"
+                  : "Not created yet — create it first"}
+              </p>
+            </div>
+
+            <button
+              onClick={handleToggle}
+              disabled={toggling || !selectedGameweek}
+              className="relative w-14 h-7 rounded-full cursor-pointer border-none transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                background: selectedGameweek?.is_active
+                  ? "var(--accent-green)"
+                  : "rgba(255, 255, 255, 0.1)",
+              }}
+              title={
+                !selectedGameweek
+                  ? "Create this gameweek first"
+                  : selectedGameweek.is_active
+                    ? "Click to deactivate"
+                    : "Click to activate"
+              }
+            >
+              <div
+                className="absolute top-1 w-5 h-5 rounded-full transition-all duration-300"
+                style={{
+                  background: selectedGameweek?.is_active ? "#000" : "var(--text-muted)",
+                  left: selectedGameweek?.is_active ? "calc(100% - 24px)" : "4px",
+                }}
+              />
+            </button>
+          </div>
         </motion.div>
 
         {/* Status messages */}

@@ -79,6 +79,66 @@ pub async fn get_week_stats(
     Ok(Json(stats))
 }
 
+/// GET /api/admin/gameweeks
+///
+/// List all gameweeks with their status.
+pub async fn get_gameweeks(
+    State(state): State<AppState>,
+) -> AppResult<Json<Vec<MatchWeek>>> {
+    let weeks = sqlx::query_as::<_, MatchWeek>(
+        "SELECT id, week_number, start_date, end_date, is_active FROM match_weeks ORDER BY week_number",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(weeks))
+}
+
+/// PUT /api/admin/gameweek/:week/toggle
+///
+/// Toggle a gameweek's active status. When activating, deactivates all others.
+/// When deactivating, simply sets is_active = false (no active gameweek).
+pub async fn toggle_gameweek(
+    State(state): State<AppState>,
+    Path(week_number): Path<i32>,
+) -> AppResult<Json<MatchWeek>> {
+    let current = sqlx::query_as::<_, MatchWeek>(
+        "SELECT id, week_number, start_date, end_date, is_active FROM match_weeks WHERE week_number = $1",
+    )
+    .bind(week_number)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Gameweek {week_number} not found. Create it first.")))?;
+
+    let mut tx = state.pool.begin().await?;
+
+    if current.is_active {
+        sqlx::query("UPDATE match_weeks SET is_active = false WHERE week_number = $1")
+            .bind(week_number)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        sqlx::query("UPDATE match_weeks SET is_active = false WHERE is_active = true")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE match_weeks SET is_active = true WHERE week_number = $1")
+            .bind(week_number)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    let updated = sqlx::query_as::<_, MatchWeek>(
+        "SELECT id, week_number, start_date, end_date, is_active FROM match_weeks WHERE week_number = $1",
+    )
+    .bind(week_number)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(Json(updated))
+}
+
 /// POST /api/admin/gameweek/:week/stats
 ///
 /// Batch upsert player stats for a gameweek, recalculate points.

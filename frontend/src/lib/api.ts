@@ -389,6 +389,17 @@ export function createGameweek(
   });
 }
 
+export function getGameweeks(token: string) {
+  return apiFetch<MatchWeek[]>("/api/admin/gameweeks", { token });
+}
+
+export function toggleGameweek(weekNumber: number, token: string) {
+  return apiFetch<MatchWeek>(`/api/admin/gameweek/${weekNumber}/toggle`, {
+    method: "PUT",
+    token,
+  });
+}
+
 export function getWeekStatsAdmin(week: number, token: string) {
   return apiFetch<AdminPlayerStats[]>(`/api/admin/gameweek/${week}/stats`, {
     token,
