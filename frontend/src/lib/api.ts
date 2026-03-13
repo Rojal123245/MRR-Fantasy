@@ -182,6 +182,18 @@ export function getLeaderboard(leagueId: string) {
   return apiFetch<LeagueMember[]>(`/api/leagues/${leagueId}/leaderboard`);
 }
 
+export interface MemberLineup {
+  user_id: string;
+  username: string;
+  team_name: string;
+  captain_id: string | null;
+  starters: StarterPlayer[];
+}
+
+export function getMemberLineup(leagueId: string, userId: string, token: string) {
+  return apiFetch<MemberLineup>(`/api/leagues/${leagueId}/members/${userId}/lineup`, { token });
+}
+
 export interface MyLeague {
   id: string;
   name: string;
@@ -235,6 +247,36 @@ export function deactivateChip(
 ) {
   return apiFetch<ChipStatus>(`/api/teams/${teamId}/chips/${chipType}`, {
     method: "DELETE",
+    token,
+  });
+}
+
+// Transfers
+export interface TransferStatus {
+  transfer_available: boolean;
+  active_gameweek: number | null;
+  transferred_out: string | null;
+  transferred_in: string | null;
+}
+
+export function getTransferStatus(teamId: string, token: string) {
+  return apiFetch<TransferStatus>(`/api/teams/${teamId}/transfer`, { token });
+}
+
+export function transferPlayer(
+  teamId: string,
+  playerOutId: string,
+  playerInId: string,
+  assignedPosition: Position | null,
+  token: string
+) {
+  return apiFetch<FantasyTeam>(`/api/teams/${teamId}/transfer`, {
+    method: "POST",
+    body: {
+      player_out_id: playerOutId,
+      player_in_id: playerInId,
+      ...(assignedPosition ? { assigned_position: assignedPosition } : {}),
+    },
     token,
   });
 }

@@ -8,8 +8,10 @@ use uuid::Uuid;
 use crate::auth::handler::AppState;
 use crate::auth::middleware::AuthUser;
 use crate::error::{AppError, AppResult};
+use crate::handlers::teams::compute_lock_status;
 use crate::models::{
-    CreateLeagueRequest, JoinLeagueRequest, League, LeagueDetail, LeagueMemberStanding, MyLeague,
+    CreateLeagueRequest, JoinLeagueRequest, League, LeagueDetail, LeagueMemberStanding,
+    MemberLineupResponse, MyLeague, Player, PlayerPosition, StarterPlayer,
 };
 
 /// Generate a random 8-character alphanumeric invite code.
@@ -380,4 +382,130 @@ pub async fn get_leaderboard(
     .await?;
 
     Ok(Json(standings))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct LineupStarterRow {
+    id: Uuid,
+    name: String,
+    position: PlayerPosition,
+    secondary_position: Option<PlayerPosition>,
+    is_top_player: bool,
+    team_name: String,
+    photo_url: Option<String>,
+    price: rust_decimal::Decimal,
+    total_points: i32,
+    created_at: chrono::DateTime<chrono::Utc>,
+    assigned_position: Option<PlayerPosition>,
+}
+
+/// GET /api/leagues/:league_id/members/:user_id/lineup
+///
+/// View a league member's starting 6 lineup. Only available when
+/// the lineup is locked (gameweek in progress) and only to fellow
+/// league members.
+pub async fn get_member_lineup(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path((league_id, target_user_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Json<MemberLineupResponse>> {
+    let lock = compute_lock_status();
+    if !lock.locked {
+        return Err(AppError::BadRequest(
+            "Lineups are only visible after the gameweek starts (Saturday midnight to Sunday 12:00 PM ET)"
+                .to_string(),
+        ));
+    }
+
+    let requesting_is_member = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM league_members WHERE league_id = $1 AND user_id = $2",
+    )
+    .bind(league_id)
+    .bind(auth.user_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    if requesting_is_member == 0 {
+        return Err(AppError::BadRequest(
+            "You are not a member of this league".to_string(),
+        ));
+    }
+
+    let target_is_member = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM league_members WHERE league_id = $1 AND user_id = $2",
+    )
+    .bind(league_id)
+    .bind(target_user_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    if target_is_member == 0 {
+        return Err(AppError::NotFound(
+            "User is not a member of this league".to_string(),
+        ));
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct TeamRow {
+        id: Uuid,
+        name: String,
+        captain_id: Option<Uuid>,
+    }
+
+    let team = sqlx::query_as::<_, TeamRow>(
+        "SELECT id, name, captain_id FROM fantasy_teams WHERE user_id = $1",
+    )
+    .bind(target_user_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("This player hasn't created a team yet".to_string()))?;
+
+    let starter_rows = sqlx::query_as::<_, LineupStarterRow>(
+        r#"SELECT p.id, p.name, p.position, p.secondary_position, p.is_top_player,
+                  p.team_name, p.photo_url, p.price, p.total_points, p.created_at,
+                  tp.assigned_position
+           FROM players p
+           INNER JOIN team_players tp ON p.id = tp.player_id
+           WHERE tp.team_id = $1 AND tp.is_bench = false"#,
+    )
+    .bind(team.id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let starters: Vec<StarterPlayer> = starter_rows
+        .into_iter()
+        .map(|r| {
+            let assigned = r.assigned_position.unwrap_or_else(|| r.position.clone());
+            StarterPlayer {
+                player: Player {
+                    id: r.id,
+                    name: r.name,
+                    position: r.position,
+                    secondary_position: r.secondary_position,
+                    is_top_player: r.is_top_player,
+                    team_name: r.team_name,
+                    photo_url: r.photo_url,
+                    price: r.price,
+                    total_points: r.total_points,
+                    created_at: r.created_at,
+                },
+                assigned_position: assigned,
+            }
+        })
+        .collect();
+
+    let username = sqlx::query_scalar::<_, String>(
+        "SELECT username FROM users WHERE id = $1",
+    )
+    .bind(target_user_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(MemberLineupResponse {
+        user_id: target_user_id,
+        username,
+        team_name: team.name,
+        captain_id: team.captain_id,
+        starters,
+    }))
 }
