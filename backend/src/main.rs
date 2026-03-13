@@ -8,7 +8,7 @@ mod services;
 
 use axum::{
     middleware,
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Extension, Router,
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -95,6 +95,10 @@ async fn main() {
         .route(
             "/:id/chips",
             get(handlers::chips::get_chip_status).post(handlers::chips::activate_chip),
+        )
+        .route(
+            "/:id/chips/:chip_type",
+            delete(handlers::chips::deactivate_chip),
         )
         .layer(middleware::from_fn(auth::middleware::auth_middleware))
         .layer(Extension(config.jwt_secret.clone()));

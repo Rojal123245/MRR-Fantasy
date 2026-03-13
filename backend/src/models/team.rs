@@ -62,6 +62,7 @@ pub struct SetPlayersRequest {
 pub struct ChipInfo {
     pub available: bool,
     pub used_in_week: Option<i32>,
+    pub can_deactivate: bool,
 }
 
 /// Current active gameweek summary.
@@ -90,4 +91,5 @@ pub struct ActivateChipRequest {
 pub struct ChipRow {
     pub chip_type: String,
     pub week_number: i32,
+    pub start_date: chrono::NaiveDate,
 }

@@ -15,6 +15,7 @@ import {
   getLockStatus,
   getChipStatus,
   activateChip,
+  deactivateChip,
   type Player,
   type FantasyTeam,
   type Position,
@@ -318,6 +319,26 @@ export default function TeamBuilderPage() {
       setTimeout(() => setSuccess(""), 4000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to activate chip");
+    } finally {
+      setActivatingChip(null);
+    }
+  };
+
+  const handleDeactivateChip = async (chipType: "triple_captain" | "bench_boost") => {
+    if (!team) return;
+    const token = getToken();
+    if (!token) return;
+
+    setActivatingChip(chipType);
+    setError("");
+    try {
+      const updated = await deactivateChip(team.id, chipType, token);
+      setChipStatus(updated);
+      const chipLabel = chipType === "triple_captain" ? "Triple Captain" : "Bench Boost";
+      setSuccess(`${chipLabel} deactivated. You can use it in a future gameweek.`);
+      setTimeout(() => setSuccess(""), 4000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to deactivate chip");
     } finally {
       setActivatingChip(null);
     }
@@ -679,11 +700,15 @@ export default function TeamBuilderPage() {
                       style={{
                         background: chipStatus?.triple_captain.available
                           ? "rgba(255,171,0,0.06)"
+                          : chipStatus?.triple_captain.can_deactivate
+                          ? "rgba(255,171,0,0.04)"
                           : "rgba(255,255,255,0.02)",
                         border: chipStatus?.triple_captain.available
                           ? "1px solid rgba(255,171,0,0.25)"
+                          : chipStatus?.triple_captain.can_deactivate
+                          ? "1px solid rgba(255,171,0,0.15)"
                           : "1px solid var(--border-color)",
-                        opacity: chipStatus?.triple_captain.available ? 1 : 0.6,
+                        opacity: chipStatus?.triple_captain.available || chipStatus?.triple_captain.can_deactivate ? 1 : 0.6,
                       }}
                     >
                       <div className="flex items-center gap-2 mb-1.5">
@@ -720,6 +745,28 @@ export default function TeamBuilderPage() {
                         >
                           {activatingChip === "triple_captain" ? "ACTIVATING..." : "ACTIVATE"}
                         </button>
+                      ) : chipStatus?.triple_captain.can_deactivate ? (
+                        <div className="flex items-center gap-2">
+                          <p
+                            className="text-[10px] font-bold flex items-center gap-1 flex-1"
+                            style={{ color: "#fbbf24", fontFamily: "var(--font-display)" }}
+                          >
+                            <Zap size={10} />
+                            ACTIVE — GW {chipStatus?.triple_captain.used_in_week}
+                          </p>
+                          <button
+                            onClick={() => handleDeactivateChip("triple_captain")}
+                            disabled={activatingChip === "triple_captain"}
+                            className="px-2 py-1 rounded-md text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-40"
+                            style={{
+                              fontFamily: "var(--font-display)",
+                              background: "rgba(255,82,82,0.15)",
+                              color: "var(--danger)",
+                            }}
+                          >
+                            {activatingChip === "triple_captain" ? "..." : "CANCEL"}
+                          </button>
+                        </div>
                       ) : (
                         <p
                           className="text-[10px] font-bold flex items-center gap-1"
@@ -737,11 +784,15 @@ export default function TeamBuilderPage() {
                       style={{
                         background: chipStatus?.bench_boost.available
                           ? "rgba(99,102,241,0.06)"
+                          : chipStatus?.bench_boost.can_deactivate
+                          ? "rgba(99,102,241,0.04)"
                           : "rgba(255,255,255,0.02)",
                         border: chipStatus?.bench_boost.available
                           ? "1px solid rgba(99,102,241,0.25)"
+                          : chipStatus?.bench_boost.can_deactivate
+                          ? "1px solid rgba(99,102,241,0.15)"
                           : "1px solid var(--border-color)",
-                        opacity: chipStatus?.bench_boost.available ? 1 : 0.6,
+                        opacity: chipStatus?.bench_boost.available || chipStatus?.bench_boost.can_deactivate ? 1 : 0.6,
                       }}
                     >
                       <div className="flex items-center gap-2 mb-1.5">
@@ -778,6 +829,28 @@ export default function TeamBuilderPage() {
                         >
                           {activatingChip === "bench_boost" ? "ACTIVATING..." : "ACTIVATE"}
                         </button>
+                      ) : chipStatus?.bench_boost.can_deactivate ? (
+                        <div className="flex items-center gap-2">
+                          <p
+                            className="text-[10px] font-bold flex items-center gap-1 flex-1"
+                            style={{ color: "#818cf8", fontFamily: "var(--font-display)" }}
+                          >
+                            <Zap size={10} />
+                            ACTIVE — GW {chipStatus?.bench_boost.used_in_week}
+                          </p>
+                          <button
+                            onClick={() => handleDeactivateChip("bench_boost")}
+                            disabled={activatingChip === "bench_boost"}
+                            className="px-2 py-1 rounded-md text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-40"
+                            style={{
+                              fontFamily: "var(--font-display)",
+                              background: "rgba(255,82,82,0.15)",
+                              color: "var(--danger)",
+                            }}
+                          >
+                            {activatingChip === "bench_boost" ? "..." : "CANCEL"}
+                          </button>
+                        </div>
                       ) : (
                         <p
                           className="text-[10px] font-bold flex items-center gap-1"
