@@ -56,3 +56,38 @@ pub struct SetPlayersRequest {
     pub bench_player_ids: Vec<Uuid>,
     pub captain_id: Uuid,
 }
+
+/// Info about a single chip (Triple Captain or Bench Boost).
+#[derive(Debug, Serialize)]
+pub struct ChipInfo {
+    pub available: bool,
+    pub used_in_week: Option<i32>,
+}
+
+/// Current active gameweek summary.
+#[derive(Debug, Serialize)]
+pub struct ActiveGameweek {
+    pub id: Uuid,
+    pub week_number: i32,
+}
+
+/// Combined chip status for a team.
+#[derive(Debug, Serialize)]
+pub struct ChipStatusResponse {
+    pub triple_captain: ChipInfo,
+    pub bench_boost: ChipInfo,
+    pub active_gameweek: Option<ActiveGameweek>,
+}
+
+/// Request to activate a chip.
+#[derive(Debug, Deserialize)]
+pub struct ActivateChipRequest {
+    pub chip_type: String,
+}
+
+/// Row returned when querying chip usage.
+#[derive(Debug, sqlx::FromRow)]
+pub struct ChipRow {
+    pub chip_type: String,
+    pub week_number: i32,
+}

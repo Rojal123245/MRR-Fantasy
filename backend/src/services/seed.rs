@@ -195,7 +195,9 @@ pub async fn seed_players(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Seed sample match weeks for development.
+/// Seed 12 match weeks (one full league season).
+///
+/// Uses ON CONFLICT to safely add missing weeks to existing databases.
 ///
 /// # Errors
 /// Returns an error if database operations fail.
@@ -204,30 +206,32 @@ pub async fn seed_match_weeks(pool: &PgPool) -> Result<(), sqlx::Error> {
         .fetch_one(pool)
         .await?;
 
-    if count > 0 {
-        tracing::info!("Match weeks already seeded, skipping");
+    if count >= 12 {
+        tracing::info!("Match weeks already seeded ({count} found), skipping");
         return Ok(());
     }
 
-    tracing::info!("Seeding match weeks...");
+    tracing::info!("Seeding match weeks (12 gameweeks)...");
 
-    for week in 1..=5 {
-        let start =
-            chrono::NaiveDate::from_ymd_opt(2026, 1, (week * 7 - 6) as u32).unwrap_or_default();
-        let end = chrono::NaiveDate::from_ymd_opt(2026, 1, (week * 7) as u32).unwrap_or_default();
+    let base = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap_or_default();
+
+    for week in 1..=12i32 {
+        let start = base + chrono::Duration::days(((week - 1) * 7) as i64);
+        let end = start + chrono::Duration::days(6);
 
         sqlx::query(
             r#"INSERT INTO match_weeks (week_number, start_date, end_date, is_active)
-               VALUES ($1, $2, $3, $4)"#,
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (week_number) DO NOTHING"#,
         )
         .bind(week)
         .bind(start)
         .bind(end)
-        .bind(week == 1) // First week is active
+        .bind(week == 1)
         .execute(pool)
         .await?;
     }
 
-    tracing::info!("Seeded 5 match weeks");
+    tracing::info!("Seeded 12 match weeks");
     Ok(())
 }

@@ -92,6 +92,10 @@ async fn main() {
         .route("/my", get(handlers::teams::get_my_team))
         .route("/:id/players", put(handlers::teams::set_team_players))
         .route("/:id/points", get(handlers::teams::get_team_points))
+        .route(
+            "/:id/chips",
+            get(handlers::chips::get_chip_status).post(handlers::chips::activate_chip),
+        )
         .layer(middleware::from_fn(auth::middleware::auth_middleware))
         .layer(Extension(config.jwt_secret.clone()));
 

@@ -21,7 +21,7 @@ pub struct LockStatusResponse {
     pub unlock_at: Option<String>,
 }
 
-fn compute_lock_status() -> LockStatusResponse {
+pub fn compute_lock_status() -> LockStatusResponse {
     let now_et = Utc::now().with_timezone(&New_York);
     let weekday = now_et.weekday();
 

@@ -149,40 +149,107 @@ pub async fn get_league(
              u.username,
              u.full_name,
              ft.name AS team_name,
-             COALESCE(SUM(
-               (
-                 CASE tp.assigned_position::text
-                   WHEN 'GK'  THEN pp.goals * 10
-                   WHEN 'DEF' THEN pp.goals * 6
-                   WHEN 'MID' THEN pp.goals * 5
-                   WHEN 'FWD' THEN pp.goals * 4
-                   ELSE 0
-                 END
-                 + pp.assists * 5
-                 + CASE tp.assigned_position::text
-                     WHEN 'GK'  THEN pp.clean_sheets * 10
-                     WHEN 'DEF' THEN pp.clean_sheets * 6
+             -- Starter points (2x captain) + triple captain bonus + bench boost bonus
+             COALESCE((
+               SELECT SUM(
+                 (
+                   CASE tp.assigned_position::text
+                     WHEN 'GK'  THEN pp.goals * 10
+                     WHEN 'DEF' THEN pp.goals * 6
+                     WHEN 'MID' THEN pp.goals * 5
+                     WHEN 'FWD' THEN pp.goals * 4
                      ELSE 0
                    END
-                 + CASE WHEN tp.assigned_position::text = 'GK' THEN pp.saves / 5 ELSE 0 END
-                 + pp.penalty_saves * 8
-                 + CASE WHEN pp.minutes_played >= 35 THEN 2
-                        WHEN pp.minutes_played >= 1  THEN 1
-                        ELSE 0 END
-                 - pp.own_goals * 2
-                 - pp.penalty_misses * 2
-                 - pp.regular_fouls * 1
-                 - pp.serious_fouls * 3
+                   + pp.assists * 5
+                   + CASE tp.assigned_position::text
+                       WHEN 'GK'  THEN pp.clean_sheets * 10
+                       WHEN 'DEF' THEN pp.clean_sheets * 6
+                       ELSE 0
+                     END
+                   + CASE WHEN tp.assigned_position::text = 'GK' THEN pp.saves / 5 ELSE 0 END
+                   + pp.penalty_saves * 8
+                   + CASE WHEN pp.minutes_played >= 35 THEN 2
+                          WHEN pp.minutes_played >= 1  THEN 1
+                          ELSE 0 END
+                   - pp.own_goals * 2
+                   - pp.penalty_misses * 2
+                   - pp.regular_fouls * 1
+                   - pp.serious_fouls * 3
+                 )
+                 * CASE WHEN tp.player_id = ft.captain_id THEN 2 ELSE 1 END
                )
-               * CASE WHEN tp.player_id = ft.captain_id THEN 2 ELSE 1 END
+               FROM team_players tp
+               JOIN player_points pp ON pp.player_id = tp.player_id
+               WHERE tp.team_id = ft.id AND tp.is_bench = false
+             ), 0)
+             + COALESCE((
+               SELECT SUM(
+                 CASE tp2.assigned_position::text
+                   WHEN 'GK'  THEN pp2.goals * 10
+                   WHEN 'DEF' THEN pp2.goals * 6
+                   WHEN 'MID' THEN pp2.goals * 5
+                   WHEN 'FWD' THEN pp2.goals * 4
+                   ELSE 0
+                 END
+                 + pp2.assists * 5
+                 + CASE tp2.assigned_position::text
+                     WHEN 'GK'  THEN pp2.clean_sheets * 10
+                     WHEN 'DEF' THEN pp2.clean_sheets * 6
+                     ELSE 0
+                   END
+                 + CASE WHEN tp2.assigned_position::text = 'GK' THEN pp2.saves / 5 ELSE 0 END
+                 + pp2.penalty_saves * 8
+                 + CASE WHEN pp2.minutes_played >= 35 THEN 2
+                        WHEN pp2.minutes_played >= 1  THEN 1
+                        ELSE 0 END
+                 - pp2.own_goals * 2
+                 - pp2.penalty_misses * 2
+                 - pp2.regular_fouls * 1
+                 - pp2.serious_fouls * 3
+               )
+               FROM team_chips tc2
+               JOIN team_players tp2 ON tp2.team_id = ft.id
+                 AND tp2.player_id = ft.captain_id AND tp2.is_bench = false
+               JOIN player_points pp2 ON pp2.player_id = tp2.player_id
+                 AND pp2.match_week_id = tc2.match_week_id
+               WHERE tc2.team_id = ft.id AND tc2.chip_type = 'triple_captain'
+             ), 0)
+             + COALESCE((
+               SELECT SUM(
+                 CASE p3.position::text
+                   WHEN 'GK'  THEN pp3.goals * 10
+                   WHEN 'DEF' THEN pp3.goals * 6
+                   WHEN 'MID' THEN pp3.goals * 5
+                   WHEN 'FWD' THEN pp3.goals * 4
+                   ELSE 0
+                 END
+                 + pp3.assists * 5
+                 + CASE p3.position::text
+                     WHEN 'GK'  THEN pp3.clean_sheets * 10
+                     WHEN 'DEF' THEN pp3.clean_sheets * 6
+                     ELSE 0
+                   END
+                 + CASE WHEN p3.position::text = 'GK' THEN pp3.saves / 5 ELSE 0 END
+                 + pp3.penalty_saves * 8
+                 + CASE WHEN pp3.minutes_played >= 35 THEN 2
+                        WHEN pp3.minutes_played >= 1  THEN 1
+                        ELSE 0 END
+                 - pp3.own_goals * 2
+                 - pp3.penalty_misses * 2
+                 - pp3.regular_fouls * 1
+                 - pp3.serious_fouls * 3
+               )
+               FROM team_chips tc3
+               JOIN team_players tp3 ON tp3.team_id = ft.id AND tp3.is_bench = true
+               JOIN players p3 ON p3.id = tp3.player_id
+               JOIN player_points pp3 ON pp3.player_id = tp3.player_id
+                 AND pp3.match_week_id = tc3.match_week_id
+               WHERE tc3.team_id = ft.id AND tc3.chip_type = 'bench_boost'
              ), 0) AS total_points
            FROM league_members lm
            INNER JOIN users u ON u.id = lm.user_id
            LEFT JOIN fantasy_teams ft ON ft.user_id = u.id
-           LEFT JOIN team_players tp ON tp.team_id = ft.id AND tp.is_bench = false
-           LEFT JOIN player_points pp ON pp.player_id = tp.player_id
            WHERE lm.league_id = $1
-           GROUP BY u.id, u.username, u.full_name, ft.name
            ORDER BY total_points DESC"#,
     )
     .bind(league_id)
@@ -205,40 +272,107 @@ pub async fn get_leaderboard(
              u.username,
              u.full_name,
              ft.name AS team_name,
-             COALESCE(SUM(
-               (
-                 CASE tp.assigned_position::text
-                   WHEN 'GK'  THEN pp.goals * 10
-                   WHEN 'DEF' THEN pp.goals * 6
-                   WHEN 'MID' THEN pp.goals * 5
-                   WHEN 'FWD' THEN pp.goals * 4
-                   ELSE 0
-                 END
-                 + pp.assists * 5
-                 + CASE tp.assigned_position::text
-                     WHEN 'GK'  THEN pp.clean_sheets * 10
-                     WHEN 'DEF' THEN pp.clean_sheets * 6
+             -- Starter points (2x captain) + triple captain bonus + bench boost bonus
+             COALESCE((
+               SELECT SUM(
+                 (
+                   CASE tp.assigned_position::text
+                     WHEN 'GK'  THEN pp.goals * 10
+                     WHEN 'DEF' THEN pp.goals * 6
+                     WHEN 'MID' THEN pp.goals * 5
+                     WHEN 'FWD' THEN pp.goals * 4
                      ELSE 0
                    END
-                 + CASE WHEN tp.assigned_position::text = 'GK' THEN pp.saves / 5 ELSE 0 END
-                 + pp.penalty_saves * 8
-                 + CASE WHEN pp.minutes_played >= 35 THEN 2
-                        WHEN pp.minutes_played >= 1  THEN 1
-                        ELSE 0 END
-                 - pp.own_goals * 2
-                 - pp.penalty_misses * 2
-                 - pp.regular_fouls * 1
-                 - pp.serious_fouls * 3
+                   + pp.assists * 5
+                   + CASE tp.assigned_position::text
+                       WHEN 'GK'  THEN pp.clean_sheets * 10
+                       WHEN 'DEF' THEN pp.clean_sheets * 6
+                       ELSE 0
+                     END
+                   + CASE WHEN tp.assigned_position::text = 'GK' THEN pp.saves / 5 ELSE 0 END
+                   + pp.penalty_saves * 8
+                   + CASE WHEN pp.minutes_played >= 35 THEN 2
+                          WHEN pp.minutes_played >= 1  THEN 1
+                          ELSE 0 END
+                   - pp.own_goals * 2
+                   - pp.penalty_misses * 2
+                   - pp.regular_fouls * 1
+                   - pp.serious_fouls * 3
+                 )
+                 * CASE WHEN tp.player_id = ft.captain_id THEN 2 ELSE 1 END
                )
-               * CASE WHEN tp.player_id = ft.captain_id THEN 2 ELSE 1 END
+               FROM team_players tp
+               JOIN player_points pp ON pp.player_id = tp.player_id
+               WHERE tp.team_id = ft.id AND tp.is_bench = false
+             ), 0)
+             + COALESCE((
+               SELECT SUM(
+                 CASE tp2.assigned_position::text
+                   WHEN 'GK'  THEN pp2.goals * 10
+                   WHEN 'DEF' THEN pp2.goals * 6
+                   WHEN 'MID' THEN pp2.goals * 5
+                   WHEN 'FWD' THEN pp2.goals * 4
+                   ELSE 0
+                 END
+                 + pp2.assists * 5
+                 + CASE tp2.assigned_position::text
+                     WHEN 'GK'  THEN pp2.clean_sheets * 10
+                     WHEN 'DEF' THEN pp2.clean_sheets * 6
+                     ELSE 0
+                   END
+                 + CASE WHEN tp2.assigned_position::text = 'GK' THEN pp2.saves / 5 ELSE 0 END
+                 + pp2.penalty_saves * 8
+                 + CASE WHEN pp2.minutes_played >= 35 THEN 2
+                        WHEN pp2.minutes_played >= 1  THEN 1
+                        ELSE 0 END
+                 - pp2.own_goals * 2
+                 - pp2.penalty_misses * 2
+                 - pp2.regular_fouls * 1
+                 - pp2.serious_fouls * 3
+               )
+               FROM team_chips tc2
+               JOIN team_players tp2 ON tp2.team_id = ft.id
+                 AND tp2.player_id = ft.captain_id AND tp2.is_bench = false
+               JOIN player_points pp2 ON pp2.player_id = tp2.player_id
+                 AND pp2.match_week_id = tc2.match_week_id
+               WHERE tc2.team_id = ft.id AND tc2.chip_type = 'triple_captain'
+             ), 0)
+             + COALESCE((
+               SELECT SUM(
+                 CASE p3.position::text
+                   WHEN 'GK'  THEN pp3.goals * 10
+                   WHEN 'DEF' THEN pp3.goals * 6
+                   WHEN 'MID' THEN pp3.goals * 5
+                   WHEN 'FWD' THEN pp3.goals * 4
+                   ELSE 0
+                 END
+                 + pp3.assists * 5
+                 + CASE p3.position::text
+                     WHEN 'GK'  THEN pp3.clean_sheets * 10
+                     WHEN 'DEF' THEN pp3.clean_sheets * 6
+                     ELSE 0
+                   END
+                 + CASE WHEN p3.position::text = 'GK' THEN pp3.saves / 5 ELSE 0 END
+                 + pp3.penalty_saves * 8
+                 + CASE WHEN pp3.minutes_played >= 35 THEN 2
+                        WHEN pp3.minutes_played >= 1  THEN 1
+                        ELSE 0 END
+                 - pp3.own_goals * 2
+                 - pp3.penalty_misses * 2
+                 - pp3.regular_fouls * 1
+                 - pp3.serious_fouls * 3
+               )
+               FROM team_chips tc3
+               JOIN team_players tp3 ON tp3.team_id = ft.id AND tp3.is_bench = true
+               JOIN players p3 ON p3.id = tp3.player_id
+               JOIN player_points pp3 ON pp3.player_id = tp3.player_id
+                 AND pp3.match_week_id = tc3.match_week_id
+               WHERE tc3.team_id = ft.id AND tc3.chip_type = 'bench_boost'
              ), 0) AS total_points
            FROM league_members lm
            INNER JOIN users u ON u.id = lm.user_id
            LEFT JOIN fantasy_teams ft ON ft.user_id = u.id
-           LEFT JOIN team_players tp ON tp.team_id = ft.id AND tp.is_bench = false
-           LEFT JOIN player_points pp ON pp.player_id = tp.player_id
            WHERE lm.league_id = $1
-           GROUP BY u.id, u.username, u.full_name, ft.name
            ORDER BY total_points DESC"#,
     )
     .bind(league_id)
