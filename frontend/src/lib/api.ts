@@ -198,6 +198,7 @@ export function getMyLeagues(token: string) {
 export interface ChipInfo {
   available: boolean;
   used_in_week: number | null;
+  can_deactivate: boolean;
 }
 
 export interface ActiveGameweek {
@@ -223,6 +224,17 @@ export function activateChip(
   return apiFetch<ChipStatus>(`/api/teams/${teamId}/chips`, {
     method: "POST",
     body: { chip_type: chipType },
+    token,
+  });
+}
+
+export function deactivateChip(
+  teamId: string,
+  chipType: "triple_captain" | "bench_boost",
+  token: string
+) {
+  return apiFetch<ChipStatus>(`/api/teams/${teamId}/chips/${chipType}`, {
+    method: "DELETE",
     token,
   });
 }
