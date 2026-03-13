@@ -148,6 +148,7 @@ export interface League {
 export interface LeagueMember {
   user_id: string;
   username: string;
+  full_name: string;
   team_name: string | null;
   total_points: number;
 }

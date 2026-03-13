@@ -398,7 +398,7 @@ export default function LeaguePage() {
                   </div>
                   <div className="flex-1">
                     <p className="text-sm font-medium">{member.username}</p>
-                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{member.team_name || "No team"}</p>
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{member.full_name || member.username}</p>
                   </div>
                   <span className="text-lg font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>
                     {member.total_points}

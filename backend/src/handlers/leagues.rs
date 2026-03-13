@@ -147,6 +147,7 @@ pub async fn get_league(
         r#"SELECT
              u.id AS user_id,
              u.username,
+             u.full_name,
              ft.name AS team_name,
              COALESCE(SUM(
                (
@@ -181,7 +182,7 @@ pub async fn get_league(
            LEFT JOIN team_players tp ON tp.team_id = ft.id AND tp.is_bench = false
            LEFT JOIN player_points pp ON pp.player_id = tp.player_id
            WHERE lm.league_id = $1
-           GROUP BY u.id, u.username, ft.name
+           GROUP BY u.id, u.username, u.full_name, ft.name
            ORDER BY total_points DESC"#,
     )
     .bind(league_id)
@@ -202,6 +203,7 @@ pub async fn get_leaderboard(
         r#"SELECT
              u.id AS user_id,
              u.username,
+             u.full_name,
              ft.name AS team_name,
              COALESCE(SUM(
                (
@@ -236,7 +238,7 @@ pub async fn get_leaderboard(
            LEFT JOIN team_players tp ON tp.team_id = ft.id AND tp.is_bench = false
            LEFT JOIN player_points pp ON pp.player_id = tp.player_id
            WHERE lm.league_id = $1
-           GROUP BY u.id, u.username, ft.name
+           GROUP BY u.id, u.username, u.full_name, ft.name
            ORDER BY total_points DESC"#,
     )
     .bind(league_id)

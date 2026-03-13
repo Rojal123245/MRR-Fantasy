@@ -17,6 +17,7 @@ pub struct League {
 pub struct LeagueMemberStanding {
     pub user_id: Uuid,
     pub username: String,
+    pub full_name: String,
     pub team_name: Option<String>,
     pub total_points: Option<i64>,
 }
