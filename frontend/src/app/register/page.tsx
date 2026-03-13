@@ -79,7 +79,7 @@ export default function RegisterPage() {
             <div>
               <label className="block text-[11px] uppercase tracking-[0.15em] font-semibold mb-2.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>Username</label>
               <div className="relative">
-                <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+                <User size={18} strokeWidth={1.5} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
                 <input
                   type="text"
                   value={username}
@@ -95,7 +95,7 @@ export default function RegisterPage() {
             <div>
               <label className="block text-[11px] uppercase tracking-[0.15em] font-semibold mb-2.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>Full Name</label>
               <div className="relative">
-                <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+                <User size={18} strokeWidth={1.5} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
                 <input
                   type="text"
                   value={fullName}
@@ -110,7 +110,7 @@ export default function RegisterPage() {
             <div>
               <label className="block text-[11px] uppercase tracking-[0.15em] font-semibold mb-2.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>Email</label>
               <div className="relative">
-                <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+                <Mail size={18} strokeWidth={1.5} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
                 <input
                   type="email"
                   value={email}
@@ -125,7 +125,7 @@ export default function RegisterPage() {
             <div>
               <label className="block text-[11px] uppercase tracking-[0.15em] font-semibold mb-2.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>Password</label>
               <div className="relative">
-                <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: "var(--text-muted)" }} />
+                <Lock size={18} strokeWidth={1.5} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
                 <input
                   type="password"
                   value={password}
