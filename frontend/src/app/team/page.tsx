@@ -538,6 +538,29 @@ export default function TeamBuilderPage() {
           )}
         </AnimatePresence>
 
+        {/* Pre-Gameweek Free Mode Banner */}
+        {!isGameweekActive && hasExistingSquad && !lockStatus?.locked && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3 p-4 rounded-lg mb-6"
+            style={{
+              background: "rgba(99, 102, 241, 0.08)",
+              border: "1px solid rgba(99, 102, 241, 0.3)",
+            }}
+          >
+            <Shield size={20} style={{ color: "#818cf8", flexShrink: 0 }} />
+            <div>
+              <p className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "#818cf8" }}>
+                PRE-SEASON — FREE MODIFICATIONS
+              </p>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                No gameweek is active yet. You can freely add, remove, and swap players without restrictions. Once the admin activates Gameweek 1, your squad will be locked and you&apos;ll get 1 free transfer per gameweek.
+              </p>
+            </div>
+          </motion.div>
+        )}
+
         {/* Lineup Lock Banner */}
         {lockStatus?.locked && (
           <motion.div
