@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield, Lock } from "lucide-react";
+import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield, Lock, Zap, Flame } from "lucide-react";
 import Nav from "@/components/nav";
 import PlayerCard from "@/components/player-card";
 import Formation, { type FormationPlayer, getFormationLabel, getMissingPositions } from "@/components/formation";
@@ -13,11 +13,14 @@ import {
   createTeam,
   setTeamPlayers,
   getLockStatus,
+  getChipStatus,
+  activateChip,
   type Player,
   type FantasyTeam,
   type Position,
   type StarterAssignment,
   type LockStatus,
+  type ChipStatus,
 } from "@/lib/api";
 import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
@@ -53,6 +56,9 @@ export default function TeamBuilderPage() {
   const [captainId, setCaptainId] = useState<string | null>(null);
   // Lineup lock state
   const [lockStatus, setLockStatus] = useState<LockStatus | null>(null);
+  // Chip state
+  const [chipStatus, setChipStatus] = useState<ChipStatus | null>(null);
+  const [activatingChip, setActivatingChip] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     const token = getToken();
@@ -74,6 +80,13 @@ export default function TeamBuilderPage() {
         );
         setBench(myTeam.bench || []);
         setCaptainId(myTeam.captain_id || null);
+        // Load chip status
+        try {
+          const chips = await getChipStatus(myTeam.id, token);
+          setChipStatus(chips);
+        } catch {
+          // Chips not loaded, that's fine
+        }
       } catch {
         // No team yet, that's fine
       }
@@ -253,6 +266,13 @@ export default function TeamBuilderPage() {
       );
       setBench(updated.bench);
       setCaptainId(updated.captain_id || null);
+      // Load chip status after saving (especially for newly created teams)
+      try {
+        const chips = await getChipStatus(updated.id, token);
+        setChipStatus(chips);
+      } catch {
+        // Chips not loaded, that's fine
+      }
       setSuccess("Team saved successfully!");
       setTimeout(() => setSuccess(""), 3000);
     } catch (err) {
@@ -278,6 +298,29 @@ export default function TeamBuilderPage() {
     }
     setCaptainId(playerId);
     setError("");
+  };
+
+  const handleActivateChip = async (chipType: "triple_captain" | "bench_boost") => {
+    if (!team) {
+      setError("Save your team first before activating chips");
+      return;
+    }
+    const token = getToken();
+    if (!token) return;
+
+    setActivatingChip(chipType);
+    setError("");
+    try {
+      const updated = await activateChip(team.id, chipType, token);
+      setChipStatus(updated);
+      const chipLabel = chipType === "triple_captain" ? "Triple Captain" : "Bench Boost";
+      setSuccess(`${chipLabel} activated for Gameweek ${updated.active_gameweek?.week_number ?? "?"}!`);
+      setTimeout(() => setSuccess(""), 4000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to activate chip");
+    } finally {
+      setActivatingChip(null);
+    }
   };
 
   /** Find the assigned position for a player if they're in the starting 6. */
@@ -605,6 +648,148 @@ export default function TeamBuilderPage() {
                     </span>
                   ))}
                 </div>
+              )}
+
+              {/* Chips section */}
+              {team && (
+                <>
+                  <h3
+                    className="text-sm uppercase tracking-wider mt-6 mb-3 flex items-center gap-2"
+                    style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}
+                  >
+                    <Zap size={14} style={{ color: "var(--accent-amber)" }} />
+                    Chips
+                    {chipStatus?.active_gameweek && (
+                      <span
+                        className="ml-auto text-[10px] px-2 py-0.5 rounded-full"
+                        style={{
+                          background: "rgba(255,171,0,0.12)",
+                          color: "var(--accent-amber)",
+                          fontFamily: "var(--font-display)",
+                        }}
+                      >
+                        GW {chipStatus.active_gameweek.week_number}
+                      </span>
+                    )}
+                  </h3>
+                  <div className="space-y-2">
+                    {/* Triple Captain */}
+                    <div
+                      className="p-3 rounded-xl transition-all"
+                      style={{
+                        background: chipStatus?.triple_captain.available
+                          ? "rgba(255,171,0,0.06)"
+                          : "rgba(255,255,255,0.02)",
+                        border: chipStatus?.triple_captain.available
+                          ? "1px solid rgba(255,171,0,0.25)"
+                          : "1px solid var(--border-color)",
+                        opacity: chipStatus?.triple_captain.available ? 1 : 0.6,
+                      }}
+                    >
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <div
+                          className="w-6 h-6 rounded-lg flex items-center justify-center"
+                          style={{
+                            background: chipStatus?.triple_captain.available
+                              ? "linear-gradient(135deg, #fbbf24, #f59e0b)"
+                              : "rgba(255,255,255,0.05)",
+                          }}
+                        >
+                          <Crown size={12} style={{ color: chipStatus?.triple_captain.available ? "#1a1a2e" : "var(--text-muted)" }} />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-xs font-bold" style={{ fontFamily: "var(--font-display)" }}>
+                            TRIPLE CAPTAIN
+                          </p>
+                          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                            Captain scores 3x points
+                          </p>
+                        </div>
+                      </div>
+                      {chipStatus?.triple_captain.available ? (
+                        <button
+                          onClick={() => handleActivateChip("triple_captain")}
+                          disabled={activatingChip === "triple_captain" || lockStatus?.locked || !chipStatus?.active_gameweek}
+                          className="w-full py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                          style={{
+                            fontFamily: "var(--font-display)",
+                            background: "linear-gradient(135deg, rgba(251,191,36,0.2), rgba(245,158,11,0.2))",
+                            color: "#fbbf24",
+                            letterSpacing: "0.05em",
+                          }}
+                        >
+                          {activatingChip === "triple_captain" ? "ACTIVATING..." : "ACTIVATE"}
+                        </button>
+                      ) : (
+                        <p
+                          className="text-[10px] font-bold flex items-center gap-1"
+                          style={{ color: "var(--accent-green)", fontFamily: "var(--font-display)" }}
+                        >
+                          <Check size={10} />
+                          USED IN GW {chipStatus?.triple_captain.used_in_week}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Bench Boost */}
+                    <div
+                      className="p-3 rounded-xl transition-all"
+                      style={{
+                        background: chipStatus?.bench_boost.available
+                          ? "rgba(99,102,241,0.06)"
+                          : "rgba(255,255,255,0.02)",
+                        border: chipStatus?.bench_boost.available
+                          ? "1px solid rgba(99,102,241,0.25)"
+                          : "1px solid var(--border-color)",
+                        opacity: chipStatus?.bench_boost.available ? 1 : 0.6,
+                      }}
+                    >
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <div
+                          className="w-6 h-6 rounded-lg flex items-center justify-center"
+                          style={{
+                            background: chipStatus?.bench_boost.available
+                              ? "linear-gradient(135deg, #818cf8, #6366f1)"
+                              : "rgba(255,255,255,0.05)",
+                          }}
+                        >
+                          <Flame size={12} style={{ color: chipStatus?.bench_boost.available ? "white" : "var(--text-muted)" }} />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-xs font-bold" style={{ fontFamily: "var(--font-display)" }}>
+                            BENCH BOOST
+                          </p>
+                          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                            Bench players also score
+                          </p>
+                        </div>
+                      </div>
+                      {chipStatus?.bench_boost.available ? (
+                        <button
+                          onClick={() => handleActivateChip("bench_boost")}
+                          disabled={activatingChip === "bench_boost" || lockStatus?.locked || !chipStatus?.active_gameweek}
+                          className="w-full py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                          style={{
+                            fontFamily: "var(--font-display)",
+                            background: "linear-gradient(135deg, rgba(129,140,248,0.2), rgba(99,102,241,0.2))",
+                            color: "#818cf8",
+                            letterSpacing: "0.05em",
+                          }}
+                        >
+                          {activatingChip === "bench_boost" ? "ACTIVATING..." : "ACTIVATE"}
+                        </button>
+                      ) : (
+                        <p
+                          className="text-[10px] font-bold flex items-center gap-1"
+                          style={{ color: "var(--accent-green)", fontFamily: "var(--font-display)" }}
+                        >
+                          <Check size={10} />
+                          USED IN GW {chipStatus?.bench_boost.used_in_week}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </>
               )}
 
               {/* Bench section */}

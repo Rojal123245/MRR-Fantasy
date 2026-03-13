@@ -194,6 +194,39 @@ export function getMyLeagues(token: string) {
   return apiFetch<MyLeague[]>("/api/leagues/my", { token });
 }
 
+// Chips
+export interface ChipInfo {
+  available: boolean;
+  used_in_week: number | null;
+}
+
+export interface ActiveGameweek {
+  id: string;
+  week_number: number;
+}
+
+export interface ChipStatus {
+  triple_captain: ChipInfo;
+  bench_boost: ChipInfo;
+  active_gameweek: ActiveGameweek | null;
+}
+
+export function getChipStatus(teamId: string, token: string) {
+  return apiFetch<ChipStatus>(`/api/teams/${teamId}/chips`, { token });
+}
+
+export function activateChip(
+  teamId: string,
+  chipType: "triple_captain" | "bench_boost",
+  token: string
+) {
+  return apiFetch<ChipStatus>(`/api/teams/${teamId}/chips`, {
+    method: "POST",
+    body: { chip_type: chipType },
+    token,
+  });
+}
+
 // Lock status
 export interface LockStatus {
   locked: boolean;
