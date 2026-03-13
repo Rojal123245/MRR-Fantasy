@@ -97,7 +97,7 @@ pub async fn leaderboard(
                    LEFT JOIN player_points pp ON pp.player_id = p.id
                    WHERE p.position::text = $1 OR p.secondary_position::text = $1
                    GROUP BY p.id, p.name, p.position, p.team_name, p.photo_url, p.is_top_player, p.total_points
-                   ORDER BY p.total_points DESC"#,
+                   ORDER BY chosen_by_percent DESC, p.total_points DESC"#,
             )
             .bind(pos)
             .fetch_all(&state.pool)
@@ -125,7 +125,7 @@ pub async fn leaderboard(
                    FROM players p
                    LEFT JOIN player_points pp ON pp.player_id = p.id
                    GROUP BY p.id, p.name, p.position, p.team_name, p.photo_url, p.is_top_player, p.total_points
-                   ORDER BY p.total_points DESC"#,
+                   ORDER BY chosen_by_percent DESC, p.total_points DESC"#,
             )
             .fetch_all(&state.pool)
             .await?
