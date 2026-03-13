@@ -93,3 +93,31 @@ pub struct ChipRow {
     pub week_number: i32,
     pub start_date: chrono::NaiveDate,
 }
+
+/// Request to transfer a player (swap 1 out for 1 in).
+#[derive(Debug, Deserialize)]
+pub struct TransferRequest {
+    pub player_out_id: Uuid,
+    pub player_in_id: Uuid,
+    pub assigned_position: Option<PlayerPosition>,
+}
+
+/// Transfer status for the current gameweek.
+#[derive(Debug, Serialize)]
+pub struct TransferStatusResponse {
+    pub transfer_available: bool,
+    pub active_gameweek: Option<i32>,
+    pub transferred_out: Option<String>,
+    pub transferred_in: Option<String>,
+}
+
+/// A completed transfer record.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct TransferRecord {
+    pub id: Uuid,
+    pub team_id: Uuid,
+    pub match_week_id: Uuid,
+    pub player_out_id: Uuid,
+    pub player_in_id: Uuid,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}

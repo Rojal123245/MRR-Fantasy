@@ -12,7 +12,7 @@ use crate::auth::middleware::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     CreateTeamRequest, FantasyTeam, FantasyTeamWithPlayers, Player, PlayerPosition,
-    SetPlayersRequest, StarterPlayer,
+    SetPlayersRequest, StarterPlayer, TransferRecord, TransferRequest, TransferStatusResponse,
 };
 
 #[derive(Debug, Serialize)]
@@ -303,6 +303,38 @@ pub async fn set_team_players(
     .await?
     .ok_or_else(|| AppError::NotFound("Team not found or access denied".to_string()))?;
 
+    // When a gameweek is active, only allow rearranging existing squad (no new players).
+    // To bring in new players, use the transfer endpoint.
+    let has_active_week = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM match_weeks WHERE is_active = true",
+    )
+    .fetch_one(&state.pool)
+    .await?
+        > 0;
+
+    let current_player_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT player_id FROM team_players WHERE team_id = $1",
+    )
+    .bind(team_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    if has_active_week && !current_player_ids.is_empty() {
+        let current_set: std::collections::HashSet<Uuid> =
+            current_player_ids.iter().cloned().collect();
+        let new_ids: Vec<Uuid> = all_ids
+            .iter()
+            .filter(|id| !current_set.contains(id))
+            .cloned()
+            .collect();
+        if !new_ids.is_empty() {
+            return Err(AppError::BadRequest(
+                "A gameweek is active — you can only rearrange your existing 9 players. Use the Transfer feature to swap 1 player per week."
+                    .to_string(),
+            ));
+        }
+    }
+
     // Verify all 9 players exist and fetch starter details for position validation
     let valid_count =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM players WHERE id = ANY($1)")
@@ -524,4 +556,347 @@ pub async fn get_team_points(
         "players": starters,
         "bench": bench,
     })))
+}
+
+/// GET /api/teams/:id/transfer-status
+///
+/// Check whether the user has a transfer available for the current gameweek.
+pub async fn get_transfer_status(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(team_id): Path<Uuid>,
+) -> AppResult<Json<TransferStatusResponse>> {
+    let _team = sqlx::query_as::<_, FantasyTeam>(
+        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
+    )
+    .bind(team_id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Team not found or access denied".to_string()))?;
+
+    #[derive(sqlx::FromRow)]
+    struct ActiveWeekRow {
+        id: Uuid,
+        week_number: i32,
+    }
+
+    let active_week = sqlx::query_as::<_, ActiveWeekRow>(
+        "SELECT id, week_number FROM match_weeks WHERE is_active = true LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let Some(week) = active_week else {
+        return Ok(Json(TransferStatusResponse {
+            transfer_available: false,
+            active_gameweek: None,
+            transferred_out: None,
+            transferred_in: None,
+        }));
+    };
+
+    let existing = sqlx::query_as::<_, TransferRecord>(
+        "SELECT id, team_id, match_week_id, player_out_id, player_in_id, created_at FROM transfers WHERE team_id = $1 AND match_week_id = $2",
+    )
+    .bind(team_id)
+    .bind(week.id)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    match existing {
+        Some(transfer) => {
+            let out_name = sqlx::query_scalar::<_, String>(
+                "SELECT name FROM players WHERE id = $1",
+            )
+            .bind(transfer.player_out_id)
+            .fetch_optional(&state.pool)
+            .await?;
+
+            let in_name = sqlx::query_scalar::<_, String>(
+                "SELECT name FROM players WHERE id = $1",
+            )
+            .bind(transfer.player_in_id)
+            .fetch_optional(&state.pool)
+            .await?;
+
+            Ok(Json(TransferStatusResponse {
+                transfer_available: false,
+                active_gameweek: Some(week.week_number),
+                transferred_out: out_name,
+                transferred_in: in_name,
+            }))
+        }
+        None => Ok(Json(TransferStatusResponse {
+            transfer_available: true,
+            active_gameweek: Some(week.week_number),
+            transferred_out: None,
+            transferred_in: None,
+        })),
+    }
+}
+
+/// POST /api/teams/:id/transfer
+///
+/// Transfer 1 player: swap player_out (must be in squad) for player_in (new player).
+/// Limited to 1 transfer per active gameweek. Transfers do not accumulate.
+pub async fn transfer_player(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(team_id): Path<Uuid>,
+    Json(body): Json<TransferRequest>,
+) -> AppResult<Json<FantasyTeamWithPlayers>> {
+    let lock = compute_lock_status();
+    if lock.locked {
+        return Err(AppError::BadRequest(
+            "Transfers are locked from Saturday midnight to Sunday 12:00 PM ET".to_string(),
+        ));
+    }
+
+    let team = sqlx::query_as::<_, FantasyTeam>(
+        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
+    )
+    .bind(team_id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Team not found or access denied".to_string()))?;
+
+    #[derive(sqlx::FromRow)]
+    struct ActiveWeekRow {
+        id: Uuid,
+        #[allow(dead_code)]
+        week_number: i32,
+    }
+
+    let active_week = sqlx::query_as::<_, ActiveWeekRow>(
+        "SELECT id, week_number FROM match_weeks WHERE is_active = true LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| {
+        AppError::BadRequest("No active gameweek. Transfers are only available during a gameweek.".to_string())
+    })?;
+
+    let already_transferred = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM transfers WHERE team_id = $1 AND match_week_id = $2",
+    )
+    .bind(team_id)
+    .bind(active_week.id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    if already_transferred > 0 {
+        return Err(AppError::BadRequest(
+            "You have already used your 1 free transfer this gameweek".to_string(),
+        ));
+    }
+
+    if body.player_out_id == body.player_in_id {
+        return Err(AppError::BadRequest(
+            "Player out and player in cannot be the same".to_string(),
+        ));
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct TeamPlayerSlot {
+        is_bench: bool,
+        assigned_position: Option<PlayerPosition>,
+    }
+
+    let outgoing_slot = sqlx::query_as::<_, TeamPlayerSlot>(
+        "SELECT is_bench, assigned_position FROM team_players WHERE team_id = $1 AND player_id = $2",
+    )
+    .bind(team_id)
+    .bind(body.player_out_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| {
+        AppError::BadRequest("The player you want to transfer out is not in your squad".to_string())
+    })?;
+
+    let in_already = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM team_players WHERE team_id = $1 AND player_id = $2",
+    )
+    .bind(team_id)
+    .bind(body.player_in_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    if in_already > 0 {
+        return Err(AppError::BadRequest(
+            "The player you want to transfer in is already in your squad".to_string(),
+        ));
+    }
+
+    let incoming = sqlx::query_as::<_, Player>(
+        r#"SELECT id, name, position, secondary_position, is_top_player,
+                  team_name, photo_url, price, total_points, created_at
+           FROM players WHERE id = $1"#,
+    )
+    .bind(body.player_in_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Player to transfer in not found".to_string()))?;
+
+    let outgoing = sqlx::query_as::<_, Player>(
+        r#"SELECT id, name, position, secondary_position, is_top_player,
+                  team_name, photo_url, price, total_points, created_at
+           FROM players WHERE id = $1"#,
+    )
+    .bind(body.player_out_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Player to transfer out not found".to_string()))?;
+
+    let final_position = if outgoing_slot.is_bench {
+        None
+    } else {
+        let pos = body.assigned_position.unwrap_or_else(|| {
+            outgoing_slot
+                .assigned_position
+                .unwrap_or_else(|| incoming.position.clone())
+        });
+        Some(pos)
+    };
+
+    if let Some(ref pos) = final_position {
+        let matches_primary = incoming.position == *pos;
+        let matches_secondary = incoming
+            .secondary_position
+            .as_ref()
+            .map_or(false, |sp| *sp == *pos);
+        if !matches_primary && !matches_secondary {
+            return Err(AppError::BadRequest(format!(
+                "{} cannot play as {:?}. Valid positions: {:?}{}",
+                incoming.name,
+                pos,
+                incoming.position,
+                incoming
+                    .secondary_position
+                    .as_ref()
+                    .map_or(String::new(), |sp| format!(", {:?}", sp))
+            )));
+        }
+    }
+
+    let other_player_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT player_id FROM team_players WHERE team_id = $1 AND player_id != $2",
+    )
+    .bind(team_id)
+    .bind(body.player_out_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut all_ids: Vec<Uuid> = other_player_ids;
+    all_ids.push(body.player_in_id);
+
+    let top_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM players WHERE id = ANY($1) AND is_top_player = true",
+    )
+    .bind(&all_ids)
+    .fetch_one(&state.pool)
+    .await?;
+
+    if top_count > 2 {
+        return Err(AppError::BadRequest(
+            "Transfer would exceed the 2 top-player limit".to_string(),
+        ));
+    }
+
+    let total_cost = sqlx::query_scalar::<_, rust_decimal::Decimal>(
+        "SELECT COALESCE(SUM(price), 0) FROM players WHERE id = ANY($1)",
+    )
+    .bind(&all_ids)
+    .fetch_one(&state.pool)
+    .await?;
+
+    let budget_limit = rust_decimal::Decimal::from(70);
+    if total_cost > budget_limit {
+        return Err(AppError::BadRequest(format!(
+            "Transfer would push team cost to ${total_cost}, exceeding the $70 budget"
+        )));
+    }
+
+    if outgoing_slot.is_bench {
+        let bench_gks_without_out = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM team_players tp
+               JOIN players p ON p.id = tp.player_id
+               WHERE tp.team_id = $1 AND tp.is_bench = true
+               AND tp.player_id != $2 AND p.position = 'GK'"#,
+        )
+        .bind(team_id)
+        .bind(body.player_out_id)
+        .fetch_one(&state.pool)
+        .await?;
+
+        let incoming_is_gk = incoming.position == PlayerPosition::Gk;
+        let outgoing_is_gk = outgoing.position == PlayerPosition::Gk;
+
+        if outgoing_is_gk && !incoming_is_gk && bench_gks_without_out == 0 {
+            return Err(AppError::BadRequest(
+                "Bench must keep exactly 1 GK. Transfer in a GK to replace the bench GK.".to_string(),
+            ));
+        }
+        if !outgoing_is_gk && incoming_is_gk && bench_gks_without_out >= 1 {
+            return Err(AppError::BadRequest(
+                "Bench already has 1 GK. Cannot add another GK to the bench.".to_string(),
+            ));
+        }
+    }
+
+    if team.captain_id == Some(body.player_out_id) {
+        return Err(AppError::BadRequest(
+            "Cannot transfer out your captain. Change your captain first.".to_string(),
+        ));
+    }
+
+    let mut tx = state.pool.begin().await?;
+
+    sqlx::query("DELETE FROM team_players WHERE team_id = $1 AND player_id = $2")
+        .bind(team_id)
+        .bind(body.player_out_id)
+        .execute(&mut *tx)
+        .await?;
+
+    if outgoing_slot.is_bench {
+        sqlx::query(
+            "INSERT INTO team_players (team_id, player_id, is_bench) VALUES ($1, $2, true)",
+        )
+        .bind(team_id)
+        .bind(body.player_in_id)
+        .execute(&mut *tx)
+        .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO team_players (team_id, player_id, is_bench, assigned_position) VALUES ($1, $2, false, $3)",
+        )
+        .bind(team_id)
+        .bind(body.player_in_id)
+        .bind(&final_position)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    sqlx::query(
+        "INSERT INTO transfers (team_id, match_week_id, player_out_id, player_in_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(team_id)
+    .bind(active_week.id)
+    .bind(body.player_out_id)
+    .bind(body.player_in_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    let updated_team = sqlx::query_as::<_, FantasyTeam>(
+        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1",
+    )
+    .bind(team_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    let response = build_team_response(&state.pool, &updated_team).await?;
+    Ok(Json(response))
 }

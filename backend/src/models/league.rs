@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::StarterPlayer;
+
 /// Database row for a league.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct League {
@@ -20,6 +22,16 @@ pub struct LeagueMemberStanding {
     pub full_name: String,
     pub team_name: Option<String>,
     pub total_points: Option<i64>,
+}
+
+/// Response for viewing a league member's starting lineup.
+#[derive(Debug, Serialize)]
+pub struct MemberLineupResponse {
+    pub user_id: Uuid,
+    pub username: String,
+    pub team_name: String,
+    pub captain_id: Option<Uuid>,
+    pub starters: Vec<StarterPlayer>,
 }
 
 /// League detail with members.

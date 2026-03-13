@@ -93,6 +93,10 @@ async fn main() {
         .route("/:id/players", put(handlers::teams::set_team_players))
         .route("/:id/points", get(handlers::teams::get_team_points))
         .route(
+            "/:id/transfer",
+            get(handlers::teams::get_transfer_status).post(handlers::teams::transfer_player),
+        )
+        .route(
             "/:id/chips",
             get(handlers::chips::get_chip_status).post(handlers::chips::activate_chip),
         )
@@ -116,6 +120,10 @@ async fn main() {
         .route("/", post(handlers::leagues::create_league))
         .route("/join", post(handlers::leagues::join_league))
         .route("/my", get(handlers::leagues::get_my_leagues))
+        .route(
+            "/:league_id/members/:user_id/lineup",
+            get(handlers::leagues::get_member_lineup),
+        )
         .layer(middleware::from_fn(auth::middleware::auth_middleware))
         .layer(Extension(config.jwt_secret.clone()));
 

@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Plus, ArrowRight, Copy, Check, AlertCircle, Trophy, Crown, Shield } from "lucide-react";
+import { Users, Plus, ArrowRight, Copy, Check, AlertCircle, Trophy, Crown, Shield, Eye, X, Lock } from "lucide-react";
 import Nav from "@/components/nav";
-import { createLeague, joinLeague, getLeague, getMyLeagues, type League, type LeagueDetail, type MyLeague } from "@/lib/api";
-import { getToken, isAuthenticated } from "@/lib/auth";
+import Formation from "@/components/formation";
+import type { FormationPlayer } from "@/components/formation";
+import { createLeague, joinLeague, getLeague, getMyLeagues, getLockStatus, getMemberLineup, type League, type LeagueDetail, type MyLeague, type MemberLineup } from "@/lib/api";
+import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
 export default function LeaguePage() {
   const router = useRouter();
@@ -22,6 +24,9 @@ export default function LeaguePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [lineupModal, setLineupModal] = useState<MemberLineup | null>(null);
+  const [lineupLoading, setLineupLoading] = useState(false);
 
   const loadMyLeagues = async () => {
     const token = getToken();
@@ -43,7 +48,23 @@ export default function LeaguePage() {
       return;
     }
     loadMyLeagues();
+    getLockStatus().then((s) => setIsLocked(s.locked)).catch(() => {});
   }, [router]);
+
+  const handleViewLineup = async (leagueId: string, userId: string) => {
+    const token = getToken();
+    if (!token) return;
+    setLineupLoading(true);
+    setError("");
+    try {
+      const lineup = await getMemberLineup(leagueId, userId, token);
+      setLineupModal(lineup);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cannot view lineup");
+    } finally {
+      setLineupLoading(false);
+    }
+  };
 
   const handleCreateLeague = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -380,35 +401,150 @@ export default function LeaguePage() {
             </h3>
 
             <div className="space-y-2">
-              {leagueDetail.members.map((member, i) => (
-                <motion.div
-                  key={member.user_id}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="flex items-center gap-3 p-3 rounded-xl"
-                  style={{ background: "var(--bg-elevated)", border: i === 0 ? "1px solid rgba(255, 171, 0, 0.3)" : "1px solid var(--border-color)" }}
-                >
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold" style={{
-                    fontFamily: "var(--font-display)",
-                    background: i === 0 ? "rgba(255, 171, 0, 0.15)" : "var(--bg-secondary)",
-                    color: i === 0 ? "var(--accent-amber)" : "var(--text-muted)",
-                  }}>
-                    {i === 0 ? <Crown size={16} /> : i + 1}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">{member.username}</p>
-                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>{member.full_name || member.username}</p>
-                  </div>
-                  <span className="text-lg font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>
-                    {member.total_points}
-                  </span>
-                </motion.div>
-              ))}
+              {leagueDetail.members.map((member, i) => {
+                const currentUser = getUser();
+                const isMe = currentUser?.id === member.user_id;
+                return (
+                  <motion.div
+                    key={member.user_id}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="flex items-center gap-3 p-3 rounded-xl"
+                    style={{ background: "var(--bg-elevated)", border: i === 0 ? "1px solid rgba(255, 171, 0, 0.3)" : "1px solid var(--border-color)" }}
+                  >
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold" style={{
+                      fontFamily: "var(--font-display)",
+                      background: i === 0 ? "rgba(255, 171, 0, 0.15)" : "var(--bg-secondary)",
+                      color: i === 0 ? "var(--accent-amber)" : "var(--text-muted)",
+                    }}>
+                      {i === 0 ? <Crown size={16} /> : i + 1}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{member.username}</p>
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>{member.full_name || member.username}</p>
+                    </div>
+                    {!isMe && isLocked && member.team_name && (
+                      <button
+                        onClick={() => handleViewLineup(leagueDetail.league.id, member.user_id)}
+                        disabled={lineupLoading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer border-none"
+                        style={{
+                          fontFamily: "var(--font-display)",
+                          background: "rgba(0, 230, 118, 0.1)",
+                          color: "var(--accent-green)",
+                          border: "1px solid rgba(0, 230, 118, 0.2)",
+                        }}
+                        title="View starting lineup"
+                      >
+                        <Eye size={13} />
+                        Lineup
+                      </button>
+                    )}
+                    {!isMe && !isLocked && member.team_name && (
+                      <div
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"
+                        style={{ color: "var(--text-muted)" }}
+                        title="Lineups visible after gameweek starts"
+                      >
+                        <Lock size={12} />
+                      </div>
+                    )}
+                    <span className="text-lg font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>
+                      {member.total_points}
+                    </span>
+                  </motion.div>
+                );
+              })}
             </div>
           </motion.div>
         )}
       </div>
+
+      {/* Lineup Modal */}
+      <AnimatePresence>
+        {lineupModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
+            onClick={() => setLineupModal(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="glass-card p-6 w-full max-w-md max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-bold" style={{ fontFamily: "var(--font-display)" }}>
+                    {lineupModal.username}&apos;s Lineup
+                  </h3>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    {lineupModal.team_name}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLineupModal(null)}
+                  className="p-2 rounded-lg cursor-pointer bg-transparent border-none"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <Formation
+                  players={lineupModal.starters.map((s): FormationPlayer => ({
+                    player: s,
+                    assignedPosition: s.assigned_position,
+                  }))}
+                  captainId={lineupModal.captain_id}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-xs uppercase tracking-wider" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
+                  Starting 6
+                </h4>
+                {lineupModal.starters.map((starter) => (
+                  <div
+                    key={starter.id}
+                    className="flex items-center gap-3 p-2.5 rounded-lg"
+                    style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-color)" }}
+                  >
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full text-white ${
+                        starter.assigned_position === "GK" ? "badge-gk" :
+                        starter.assigned_position === "DEF" ? "badge-def" :
+                        starter.assigned_position === "MID" ? "badge-mid" : "badge-fwd"
+                      }`}
+                    >
+                      {starter.assigned_position}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {starter.name}
+                        {lineupModal.captain_id === starter.id && (
+                          <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(255,171,0,0.2)", color: "#ffab00" }}>C</span>
+                        )}
+                      </p>
+                      <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{starter.team_name}</p>
+                    </div>
+                    <span className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-amber)" }}>
+                      {starter.total_points}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
