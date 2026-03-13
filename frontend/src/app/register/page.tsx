@@ -46,8 +46,8 @@ export default function RegisterPage() {
         className="w-full max-w-md relative z-10"
       >
         {/* Logo */}
-        <Link href="/" className="flex items-center justify-center gap-3 mb-12 no-underline">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base" style={{ background: "linear-gradient(135deg, var(--accent-green), var(--accent-green-dim))", color: "#000", fontFamily: "var(--font-display)" }}>
+        <Link href="/" className="flex items-center justify-center gap-3 mb-10 no-underline">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base shrink-0" style={{ background: "linear-gradient(135deg, var(--accent-green), var(--accent-green-dim))", color: "#000", fontFamily: "var(--font-display)" }}>
             M
           </div>
           <span className="text-xl font-bold tracking-wide" style={{ fontFamily: "var(--font-display)" }}>
@@ -55,7 +55,7 @@ export default function RegisterPage() {
           </span>
         </Link>
 
-        <div className="glass-card p-10">
+        <div className="glass-card no-hover p-8 sm:p-10">
           <h1 className="text-2xl font-extrabold text-center mb-2" style={{ fontFamily: "var(--font-display)" }}>
             JOIN THE GAME
           </h1>

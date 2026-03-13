@@ -95,6 +95,11 @@ body::after {
   transform: translateY(-3px);
 }
 
+.glass-card.no-hover:hover {
+  transform: none;
+  box-shadow: none;
+}
+
 /* ──────────────────────────────────────────────────
    GLOW EFFECTS — cinematic
    ────────────────────────────────────────────────── */

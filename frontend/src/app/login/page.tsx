@@ -32,7 +32,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen hero-gradient flex items-center justify-center px-4 relative overflow-hidden">
+    <div className="min-h-screen hero-gradient flex items-center justify-center px-4 py-12 relative overflow-hidden">
       {/* Ambient orb */}
       <div className="absolute w-[500px] h-[500px] rounded-full opacity-[0.04] pointer-events-none" style={{ background: "radial-gradient(circle, #00e676, transparent 70%)", top: "10%", left: "-10%" }} />
 
@@ -43,8 +43,8 @@ export default function LoginPage() {
         className="w-full max-w-md relative z-10"
       >
         {/* Logo */}
-        <Link href="/" className="flex items-center justify-center gap-3 mb-12 no-underline">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base" style={{ background: "linear-gradient(135deg, var(--accent-green), var(--accent-green-dim))", color: "#000", fontFamily: "var(--font-display)" }}>
+        <Link href="/" className="flex items-center justify-center gap-3 mb-10 no-underline">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base shrink-0" style={{ background: "linear-gradient(135deg, var(--accent-green), var(--accent-green-dim))", color: "#000", fontFamily: "var(--font-display)" }}>
             M
           </div>
           <span className="text-xl font-bold tracking-wide" style={{ fontFamily: "var(--font-display)" }}>
@@ -52,7 +52,7 @@ export default function LoginPage() {
           </span>
         </Link>
 
-        <div className="glass-card p-10">
+        <div className="glass-card no-hover p-8 sm:p-10">
           <h1 className="text-2xl font-extrabold text-center mb-2" style={{ fontFamily: "var(--font-display)" }}>
             WELCOME BACK
           </h1>
