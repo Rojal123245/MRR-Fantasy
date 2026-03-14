@@ -167,17 +167,6 @@ export default function LeaguePage() {
           })}
         </div>
 
-        {/* Lock info: league actions always available */}
-        {isLocked && (
-          <div
-            className="flex items-center gap-3 p-3 rounded-lg mb-6 text-sm"
-            style={{ background: "rgba(99, 102, 241, 0.08)", border: "1px solid rgba(99, 102, 241, 0.2)", color: "var(--text-muted)" }}
-          >
-            <Shield size={18} style={{ color: "#818cf8", flexShrink: 0 }} />
-            <span>Lineup changes are locked, but you can still create and join leagues.</span>
-          </div>
-        )}
-
         {/* Error */}
         <AnimatePresence>
           {error && (

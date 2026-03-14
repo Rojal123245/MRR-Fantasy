@@ -412,7 +412,7 @@ pub async fn get_member_lineup(
     let lock = compute_lock_status();
     if !lock.locked {
         return Err(AppError::BadRequest(
-            "Lineups are only visible during the lock period (Sunday 12:00 AM–12:00 PM ET)"
+            "Lineups are only visible after the gameweek starts (Saturday midnight to Sunday 12:00 PM ET)"
                 .to_string(),
         ));
     }
