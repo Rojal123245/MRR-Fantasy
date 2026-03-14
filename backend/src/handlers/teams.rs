@@ -25,14 +25,13 @@ pub fn compute_lock_status() -> LockStatusResponse {
     let now_et = Utc::now().with_timezone(&New_York);
     let weekday = now_et.weekday();
 
-    let locked = matches!(weekday, chrono::Weekday::Sat)
-        || (matches!(weekday, chrono::Weekday::Sun) && now_et.hour() < 12);
+    // Lock: Sunday 12:00 AM–12:00 PM ET (12 hours; Saturday night through Sunday noon)
+    let locked = matches!(weekday, chrono::Weekday::Sun) && now_et.hour() < 12;
 
     let unlock_at = if locked {
-        let days_until_sunday = if matches!(weekday, chrono::Weekday::Sat) { 1 } else { 0 };
-        let unlock = (now_et + chrono::Duration::days(days_until_sunday))
+        let unlock = now_et
             .date_naive()
-            .and_hms_opt(12, 0, 0)
+            .and_hms_opt(12, 0, 0) // Sunday 12:00 PM ET
             .map(|dt| {
                 dt.and_local_timezone(New_York)
                     .single()
@@ -222,7 +221,7 @@ pub async fn set_team_players(
     let lock = compute_lock_status();
     if lock.locked {
         return Err(AppError::BadRequest(
-            "Lineup changes are locked from Saturday midnight to Sunday 12:00 PM ET".to_string(),
+            "Lineup changes are locked Sunday 12:00 AM–12:00 PM ET".to_string(),
         ));
     }
 
@@ -649,7 +648,7 @@ pub async fn transfer_player(
     let lock = compute_lock_status();
     if lock.locked {
         return Err(AppError::BadRequest(
-            "Transfers are locked from Saturday midnight to Sunday 12:00 PM ET".to_string(),
+            "Transfers are locked Sunday 12:00 AM–12:00 PM ET".to_string(),
         ));
     }
 
