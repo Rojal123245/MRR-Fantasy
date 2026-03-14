@@ -578,7 +578,7 @@ export default function TeamBuilderPage() {
                 LINEUP LOCKED
               </p>
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Lineup changes are locked Sunday 12:00 AM–12:00 PM ET (12 hours)
+                Lineup changes are locked from Saturday midnight to Sunday 12:00 PM ET
               </p>
             </div>
           </motion.div>
