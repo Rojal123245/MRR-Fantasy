@@ -142,8 +142,36 @@ async fn build_team_response(
 ) -> Result<FantasyTeamWithPlayers, AppError> {
     let starter_rows = sqlx::query_as::<_, StarterRow>(
         r#"SELECT p.id, p.name, p.position, p.secondary_position, p.is_top_player,
-                  p.team_name, p.photo_url, p.price, p.total_points, p.created_at,
-                  tp.assigned_position
+                  p.team_name, p.photo_url, p.price, p.created_at,
+                  tp.assigned_position,
+                  COALESCE((
+                    SELECT SUM(
+                      CASE COALESCE(tp.assigned_position, p.position)::text
+                        WHEN 'GK'  THEN pp.goals * 10
+                        WHEN 'DEF' THEN pp.goals * 6
+                        WHEN 'MID' THEN pp.goals * 5
+                        WHEN 'FWD' THEN pp.goals * 4
+                        ELSE 0
+                      END
+                      + pp.assists * 5
+                      + CASE COALESCE(tp.assigned_position, p.position)::text
+                          WHEN 'GK'  THEN pp.clean_sheets * 10
+                          WHEN 'DEF' THEN pp.clean_sheets * 6
+                          ELSE 0
+                        END
+                      + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN pp.saves / 5 ELSE 0 END
+                      + pp.penalty_saves * 8
+                      + CASE WHEN pp.minutes_played >= 35 THEN 2
+                             WHEN pp.minutes_played >= 1  THEN 1
+                             ELSE 0 END
+                      - pp.own_goals * 2
+                      - pp.penalty_misses * 2
+                      - pp.regular_fouls * 1
+                      - pp.serious_fouls * 3
+                    )
+                    FROM player_points pp
+                    WHERE pp.player_id = p.id
+                  ), 0)::int AS total_points
            FROM players p
            INNER JOIN team_players tp ON p.id = tp.player_id
            WHERE tp.team_id = $1 AND tp.is_bench = false"#,
@@ -521,8 +549,36 @@ pub async fn get_team_points(
 
     let starter_rows = sqlx::query_as::<_, StarterRow>(
         r#"SELECT p.id, p.name, p.position, p.secondary_position, p.is_top_player,
-                  p.team_name, p.photo_url, p.price, p.total_points, p.created_at,
-                  tp.assigned_position
+                  p.team_name, p.photo_url, p.price, p.created_at,
+                  tp.assigned_position,
+                  COALESCE((
+                    SELECT SUM(
+                      CASE COALESCE(tp.assigned_position, p.position)::text
+                        WHEN 'GK'  THEN pp.goals * 10
+                        WHEN 'DEF' THEN pp.goals * 6
+                        WHEN 'MID' THEN pp.goals * 5
+                        WHEN 'FWD' THEN pp.goals * 4
+                        ELSE 0
+                      END
+                      + pp.assists * 5
+                      + CASE COALESCE(tp.assigned_position, p.position)::text
+                          WHEN 'GK'  THEN pp.clean_sheets * 10
+                          WHEN 'DEF' THEN pp.clean_sheets * 6
+                          ELSE 0
+                        END
+                      + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN pp.saves / 5 ELSE 0 END
+                      + pp.penalty_saves * 8
+                      + CASE WHEN pp.minutes_played >= 35 THEN 2
+                             WHEN pp.minutes_played >= 1  THEN 1
+                             ELSE 0 END
+                      - pp.own_goals * 2
+                      - pp.penalty_misses * 2
+                      - pp.regular_fouls * 1
+                      - pp.serious_fouls * 3
+                    )
+                    FROM player_points pp
+                    WHERE pp.player_id = p.id
+                  ), 0)::int AS total_points
            FROM players p
            INNER JOIN team_players tp ON p.id = tp.player_id
            WHERE tp.team_id = $1 AND tp.is_bench = false"#,
