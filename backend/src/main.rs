@@ -70,7 +70,8 @@ async fn main() {
     // Auth routes (public)
     let auth_routes = Router::new()
         .route("/register", post(auth::handler::register))
-        .route("/login", post(auth::handler::login));
+        .route("/login", post(auth::handler::login))
+        .route("/reset-password", post(auth::handler::reset_password));
 
     // Player routes (public)
     let player_routes = Router::new()

@@ -60,3 +60,16 @@ pub struct AuthResponse {
     pub token: String,
     pub user: UserResponse,
 }
+
+/// Password reset request payload.
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordRequest {
+    pub email: String,
+    pub new_password: String,
+}
+
+/// Generic success message response.
+#[derive(Debug, Serialize)]
+pub struct MessageResponse {
+    pub message: String,
+}

@@ -62,6 +62,13 @@ export function login(email: string, password: string) {
   });
 }
 
+export function resetPassword(email: string, newPassword: string) {
+  return apiFetch<{ message: string }>("/api/auth/reset-password", {
+    method: "POST",
+    body: { email, new_password: newPassword },
+  });
+}
+
 // Players
 export interface Player {
   id: string;
