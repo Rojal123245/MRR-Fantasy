@@ -151,11 +151,10 @@ pub async fn get_league(
              u.username,
              u.full_name,
              ft.name AS team_name,
-             -- Starter points (2x captain) + triple captain bonus + bench boost bonus
              COALESCE((
                SELECT SUM(
                  (
-                   CASE tp.assigned_position::text
+                   CASE COALESCE(tp.assigned_position, ps.position)::text
                      WHEN 'GK'  THEN pp.goals * 10
                      WHEN 'DEF' THEN pp.goals * 6
                      WHEN 'MID' THEN pp.goals * 5
@@ -163,12 +162,12 @@ pub async fn get_league(
                      ELSE 0
                    END
                    + pp.assists * 5
-                   + CASE tp.assigned_position::text
+                   + CASE COALESCE(tp.assigned_position, ps.position)::text
                        WHEN 'GK'  THEN pp.clean_sheets * 10
                        WHEN 'DEF' THEN pp.clean_sheets * 6
                        ELSE 0
                      END
-                   + CASE WHEN tp.assigned_position::text = 'GK' THEN pp.saves / 5 ELSE 0 END
+                   + CASE WHEN COALESCE(tp.assigned_position, ps.position)::text = 'GK' THEN pp.saves / 5 ELSE 0 END
                    + pp.penalty_saves * 8
                    + CASE WHEN pp.minutes_played >= 35 THEN 2
                           WHEN pp.minutes_played >= 1  THEN 1
@@ -181,12 +180,13 @@ pub async fn get_league(
                  * CASE WHEN tp.player_id = ft.captain_id THEN 2 ELSE 1 END
                )
                FROM team_players tp
+               JOIN players ps ON ps.id = tp.player_id
                JOIN player_points pp ON pp.player_id = tp.player_id
                WHERE tp.team_id = ft.id AND tp.is_bench = false
              ), 0)
              + COALESCE((
                SELECT SUM(
-                 CASE tp2.assigned_position::text
+                 CASE COALESCE(tp2.assigned_position, ps2.position)::text
                    WHEN 'GK'  THEN pp2.goals * 10
                    WHEN 'DEF' THEN pp2.goals * 6
                    WHEN 'MID' THEN pp2.goals * 5
@@ -194,12 +194,12 @@ pub async fn get_league(
                    ELSE 0
                  END
                  + pp2.assists * 5
-                 + CASE tp2.assigned_position::text
+                 + CASE COALESCE(tp2.assigned_position, ps2.position)::text
                      WHEN 'GK'  THEN pp2.clean_sheets * 10
                      WHEN 'DEF' THEN pp2.clean_sheets * 6
                      ELSE 0
                    END
-                 + CASE WHEN tp2.assigned_position::text = 'GK' THEN pp2.saves / 5 ELSE 0 END
+                 + CASE WHEN COALESCE(tp2.assigned_position, ps2.position)::text = 'GK' THEN pp2.saves / 5 ELSE 0 END
                  + pp2.penalty_saves * 8
                  + CASE WHEN pp2.minutes_played >= 35 THEN 2
                         WHEN pp2.minutes_played >= 1  THEN 1
@@ -212,6 +212,7 @@ pub async fn get_league(
                FROM team_chips tc2
                JOIN team_players tp2 ON tp2.team_id = ft.id
                  AND tp2.player_id = ft.captain_id AND tp2.is_bench = false
+               JOIN players ps2 ON ps2.id = tp2.player_id
                JOIN player_points pp2 ON pp2.player_id = tp2.player_id
                  AND pp2.match_week_id = tc2.match_week_id
                WHERE tc2.team_id = ft.id AND tc2.chip_type = 'triple_captain'
@@ -274,11 +275,10 @@ pub async fn get_leaderboard(
              u.username,
              u.full_name,
              ft.name AS team_name,
-             -- Starter points (2x captain) + triple captain bonus + bench boost bonus
              COALESCE((
                SELECT SUM(
                  (
-                   CASE tp.assigned_position::text
+                   CASE COALESCE(tp.assigned_position, ps.position)::text
                      WHEN 'GK'  THEN pp.goals * 10
                      WHEN 'DEF' THEN pp.goals * 6
                      WHEN 'MID' THEN pp.goals * 5
@@ -286,12 +286,12 @@ pub async fn get_leaderboard(
                      ELSE 0
                    END
                    + pp.assists * 5
-                   + CASE tp.assigned_position::text
+                   + CASE COALESCE(tp.assigned_position, ps.position)::text
                        WHEN 'GK'  THEN pp.clean_sheets * 10
                        WHEN 'DEF' THEN pp.clean_sheets * 6
                        ELSE 0
                      END
-                   + CASE WHEN tp.assigned_position::text = 'GK' THEN pp.saves / 5 ELSE 0 END
+                   + CASE WHEN COALESCE(tp.assigned_position, ps.position)::text = 'GK' THEN pp.saves / 5 ELSE 0 END
                    + pp.penalty_saves * 8
                    + CASE WHEN pp.minutes_played >= 35 THEN 2
                           WHEN pp.minutes_played >= 1  THEN 1
@@ -304,12 +304,13 @@ pub async fn get_leaderboard(
                  * CASE WHEN tp.player_id = ft.captain_id THEN 2 ELSE 1 END
                )
                FROM team_players tp
+               JOIN players ps ON ps.id = tp.player_id
                JOIN player_points pp ON pp.player_id = tp.player_id
                WHERE tp.team_id = ft.id AND tp.is_bench = false
              ), 0)
              + COALESCE((
                SELECT SUM(
-                 CASE tp2.assigned_position::text
+                 CASE COALESCE(tp2.assigned_position, ps2.position)::text
                    WHEN 'GK'  THEN pp2.goals * 10
                    WHEN 'DEF' THEN pp2.goals * 6
                    WHEN 'MID' THEN pp2.goals * 5
@@ -317,12 +318,12 @@ pub async fn get_leaderboard(
                    ELSE 0
                  END
                  + pp2.assists * 5
-                 + CASE tp2.assigned_position::text
+                 + CASE COALESCE(tp2.assigned_position, ps2.position)::text
                      WHEN 'GK'  THEN pp2.clean_sheets * 10
                      WHEN 'DEF' THEN pp2.clean_sheets * 6
                      ELSE 0
                    END
-                 + CASE WHEN tp2.assigned_position::text = 'GK' THEN pp2.saves / 5 ELSE 0 END
+                 + CASE WHEN COALESCE(tp2.assigned_position, ps2.position)::text = 'GK' THEN pp2.saves / 5 ELSE 0 END
                  + pp2.penalty_saves * 8
                  + CASE WHEN pp2.minutes_played >= 35 THEN 2
                         WHEN pp2.minutes_played >= 1  THEN 1
@@ -335,6 +336,7 @@ pub async fn get_leaderboard(
                FROM team_chips tc2
                JOIN team_players tp2 ON tp2.team_id = ft.id
                  AND tp2.player_id = ft.captain_id AND tp2.is_bench = false
+               JOIN players ps2 ON ps2.id = tp2.player_id
                JOIN player_points pp2 ON pp2.player_id = tp2.player_id
                  AND pp2.match_week_id = tc2.match_week_id
                WHERE tc2.team_id = ft.id AND tc2.chip_type = 'triple_captain'
