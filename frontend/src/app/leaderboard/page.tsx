@@ -14,7 +14,7 @@ function StatsForPosition({ player }: { player: PlayerLeaderboard }) {
   switch (player.position) {
     case "GK":
       return (
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex items-center flex-wrap gap-1.5 sm:gap-3 text-[10px] sm:text-xs justify-end">
           <StatPill label="G" value={player.goals} />
           <StatPill label="A" value={player.assists} />
           <StatPill label="CS" value={player.clean_sheets} />
@@ -23,7 +23,7 @@ function StatsForPosition({ player }: { player: PlayerLeaderboard }) {
       );
     case "DEF":
       return (
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex items-center flex-wrap gap-1.5 sm:gap-3 text-[10px] sm:text-xs justify-end">
           <StatPill label="G" value={player.goals} />
           <StatPill label="A" value={player.assists} />
           <StatPill label="CS" value={player.clean_sheets} />
@@ -33,7 +33,7 @@ function StatsForPosition({ player }: { player: PlayerLeaderboard }) {
     case "FWD":
     default:
       return (
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex items-center flex-wrap gap-1.5 sm:gap-3 text-[10px] sm:text-xs justify-end">
           <StatPill label="G" value={player.goals} />
           <StatPill label="A" value={player.assists} />
         </div>
@@ -44,11 +44,11 @@ function StatsForPosition({ player }: { player: PlayerLeaderboard }) {
 function StatPill({ label, value }: { label: string; value: number }) {
   return (
     <span
-      className="flex items-center gap-1 px-2 py-0.5 rounded-md font-bold"
+      className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-md font-bold leading-none"
       style={{ background: "var(--bg-secondary)", fontFamily: "var(--font-display)" }}
     >
-      <span style={{ color: "var(--text-muted)", fontSize: "9px" }}>{label}</span>
-      <span style={{ color: "var(--text-primary)" }}>{value}</span>
+      <span className="text-[8px] sm:text-[9px]" style={{ color: "var(--text-muted)" }}>{label}</span>
+      <span className="text-[10px] sm:text-xs" style={{ color: "var(--text-primary)" }}>{value}</span>
     </span>
   );
 }
@@ -237,7 +237,7 @@ export default function LeaderboardPage() {
 
             {/* Full rankings list */}
             <div className="glass-card overflow-hidden">
-              <div className="px-6 py-4 flex items-center gap-2" style={{ borderBottom: "1px solid var(--border-color)" }}>
+              <div className="px-4 sm:px-6 py-3 sm:py-4 flex items-center gap-2" style={{ borderBottom: "1px solid var(--border-color)" }}>
                 <TrendingUp size={16} style={{ color: "var(--accent-green)" }} />
                 <h3 className="text-sm uppercase tracking-wider" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>
                   Full Rankings
@@ -251,37 +251,41 @@ export default function LeaderboardPage() {
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.05 * Math.min(i, 15) }}
-                    className="flex items-center gap-4 px-6 py-3"
+                    className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 px-3 sm:px-6 py-3"
                     style={{
                       background: getRankBg(i),
                       borderBottom: getRankBorder(i),
                     }}
                   >
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{
-                      background: i < 3 ? "transparent" : "var(--bg-secondary)",
-                    }}>
-                      {getRankIcon(i)}
-                    </div>
+                    <div className="flex items-center gap-2 sm:gap-4 w-full min-w-0">
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center shrink-0" style={{
+                        background: i < 3 ? "transparent" : "var(--bg-secondary)",
+                      }}>
+                        {getRankIcon(i)}
+                      </div>
 
-                    <span className={`badge-${player.position.toLowerCase()} text-[10px] font-bold px-2 py-0.5 rounded-full text-white`}>
-                      {player.position}
-                    </span>
-
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{player.name}</p>
-                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>{player.team_name}</p>
-                    </div>
-
-                    <StatsForPosition player={player} />
-
-                    <div
-                      className="flex items-center gap-1 px-2 py-1 rounded-md"
-                      style={{ background: "rgba(0, 230, 118, 0.08)" }}
-                    >
-                      <Users size={10} style={{ color: "var(--text-muted)" }} />
-                      <span className="text-[10px] font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>
-                        {player.chosen_by_percent.toFixed(0)}%
+                      <span className={`badge-${player.position.toLowerCase()} text-[10px] font-bold px-2 py-0.5 rounded-full text-white shrink-0`}>
+                        {player.position}
                       </span>
+
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{player.name}</p>
+                        <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{player.team_name}</p>
+                      </div>
+                    </div>
+
+                    <div className="w-full sm:w-auto sm:ml-auto flex items-center justify-between sm:justify-end gap-2 sm:gap-3">
+                      <StatsForPosition player={player} />
+
+                      <div
+                        className="flex items-center gap-1 px-2 py-1 rounded-md shrink-0"
+                        style={{ background: "rgba(0, 230, 118, 0.08)" }}
+                      >
+                        <Users size={10} style={{ color: "var(--text-muted)" }} />
+                        <span className="text-[10px] font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>
+                          {player.chosen_by_percent.toFixed(0)}%
+                        </span>
+                      </div>
                     </div>
                   </motion.div>
                 ))}
