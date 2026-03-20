@@ -245,6 +245,52 @@ async fn team_total_points(pool: &sqlx::PgPool, team_id: Uuid) -> Result<i32, Ap
     Ok(total as i32)
 }
 
+async fn snapshot_team_lineup_if_missing(
+    pool: &sqlx::PgPool,
+    team_id: Uuid,
+    match_week_id: Uuid,
+) -> Result<(), AppError> {
+    let mut tx = pool.begin().await?;
+
+    let captain_id = sqlx::query_scalar::<_, Option<Uuid>>(
+        "SELECT captain_id FROM fantasy_teams WHERE id = $1",
+    )
+    .bind(team_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+
+    // Keep first snapshot immutable for a team+week.
+    let lineup_id = sqlx::query_scalar::<_, Uuid>(
+        r#"INSERT INTO team_gameweek_lineups (team_id, match_week_id, captain_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (team_id, match_week_id) DO UPDATE
+             SET captain_id = team_gameweek_lineups.captain_id
+           RETURNING id"#,
+    )
+    .bind(team_id)
+    .bind(match_week_id)
+    .bind(captain_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"INSERT INTO team_gameweek_lineup_players
+             (team_gameweek_lineup_id, player_id, is_bench, assigned_position)
+           SELECT $1, tp.player_id, tp.is_bench, tp.assigned_position
+           FROM team_players tp
+           WHERE tp.team_id = $2
+           ON CONFLICT (team_gameweek_lineup_id, player_id) DO NOTHING"#,
+    )
+    .bind(lineup_id)
+    .bind(team_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
 /// GET /api/teams/my
 ///
 /// Get the authenticated user's fantasy team with starters and bench.
@@ -368,11 +414,15 @@ pub async fn set_team_players(
 
     // When a gameweek is active, only allow rearranging existing squad (no new players).
     // To bring in new players, use the transfer endpoint.
-    let has_active_week =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM match_weeks WHERE is_active = true")
-            .fetch_one(&state.pool)
-            .await?
-            > 0;
+    let active_week_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM match_weeks WHERE is_active = true LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if let Some(week_id) = active_week_id {
+        snapshot_team_lineup_if_missing(&state.pool, team_id, week_id).await?;
+    }
 
     let current_player_ids =
         sqlx::query_scalar::<_, Uuid>("SELECT player_id FROM team_players WHERE team_id = $1")
@@ -380,7 +430,7 @@ pub async fn set_team_players(
             .fetch_all(&state.pool)
             .await?;
 
-    if has_active_week && !current_player_ids.is_empty() {
+    if active_week_id.is_some() && !current_player_ids.is_empty() {
         let current_set: std::collections::HashSet<Uuid> =
             current_player_ids.iter().cloned().collect();
         let new_ids: Vec<Uuid> = all_ids
@@ -783,6 +833,8 @@ pub async fn transfer_player(
             "No active gameweek. Transfers are only available during a gameweek.".to_string(),
         )
     })?;
+
+    snapshot_team_lineup_if_missing(&state.pool, team_id, active_week.id).await?;
 
     if body.player_out_id == body.player_in_id {
         return Err(AppError::BadRequest(
