@@ -184,7 +184,7 @@ pub async fn get_league(
                JOIN player_points pp ON pp.player_id = tp.player_id
                WHERE tp.team_id = ft.id AND tp.is_bench = false
              ), 0)
-             + COALESCE((
+            + COALESCE((
                SELECT SUM(
                  CASE COALESCE(tp2.assigned_position, ps2.position)::text
                    WHEN 'GK'  THEN pp2.goals * 10
@@ -248,7 +248,16 @@ pub async fn get_league(
                JOIN player_points pp3 ON pp3.player_id = tp3.player_id
                  AND pp3.match_week_id = tc3.match_week_id
                WHERE tc3.team_id = ft.id AND tc3.chip_type = 'bench_boost'
-             ), 0) AS total_points
+            ), 0)
+            - COALESCE((
+              SELECT SUM(GREATEST(x.transfer_count - 1, 0) * 4)
+              FROM (
+                SELECT COUNT(*)::int AS transfer_count
+                FROM transfers tr
+                WHERE tr.team_id = ft.id
+                GROUP BY tr.match_week_id
+              ) x
+            ), 0) AS total_points
            FROM league_members lm
            INNER JOIN users u ON u.id = lm.user_id
            LEFT JOIN fantasy_teams ft ON ft.user_id = u.id
@@ -308,7 +317,7 @@ pub async fn get_leaderboard(
                JOIN player_points pp ON pp.player_id = tp.player_id
                WHERE tp.team_id = ft.id AND tp.is_bench = false
              ), 0)
-             + COALESCE((
+            + COALESCE((
                SELECT SUM(
                  CASE COALESCE(tp2.assigned_position, ps2.position)::text
                    WHEN 'GK'  THEN pp2.goals * 10
@@ -372,7 +381,16 @@ pub async fn get_leaderboard(
                JOIN player_points pp3 ON pp3.player_id = tp3.player_id
                  AND pp3.match_week_id = tc3.match_week_id
                WHERE tc3.team_id = ft.id AND tc3.chip_type = 'bench_boost'
-             ), 0) AS total_points
+            ), 0)
+            - COALESCE((
+              SELECT SUM(GREATEST(x.transfer_count - 1, 0) * 4)
+              FROM (
+                SELECT COUNT(*)::int AS transfer_count
+                FROM transfers tr
+                WHERE tr.team_id = ft.id
+                GROUP BY tr.match_week_id
+              ) x
+            ), 0) AS total_points
            FROM league_members lm
            INNER JOIN users u ON u.id = lm.user_id
            LEFT JOIN fantasy_teams ft ON ft.user_id = u.id
@@ -411,7 +429,7 @@ pub async fn get_member_lineup(
     Extension(auth): Extension<AuthUser>,
     Path((league_id, target_user_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<Json<MemberLineupResponse>> {
-    let lock = compute_lock_status();
+    let lock = compute_lock_status(&state.pool).await?;
     if !lock.locked {
         return Err(AppError::BadRequest(
             "Lineups are only visible after the gameweek starts (Saturday midnight to Sunday 12:00 PM ET)"
@@ -524,12 +542,10 @@ pub async fn get_member_lineup(
         })
         .collect();
 
-    let username = sqlx::query_scalar::<_, String>(
-        "SELECT username FROM users WHERE id = $1",
-    )
-    .bind(target_user_id)
-    .fetch_one(&state.pool)
-    .await?;
+    let username = sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
+        .bind(target_user_id)
+        .fetch_one(&state.pool)
+        .await?;
 
     Ok(Json(MemberLineupResponse {
         user_id: target_user_id,

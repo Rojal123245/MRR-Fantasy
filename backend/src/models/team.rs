@@ -107,6 +107,10 @@ pub struct TransferRequest {
 pub struct TransferStatusResponse {
     pub transfer_available: bool,
     pub active_gameweek: Option<i32>,
+    pub transfers_used: i32,
+    pub free_transfers: i32,
+    pub extra_transfers: i32,
+    pub points_hit: i32,
     pub transferred_out: Option<String>,
     pub transferred_in: Option<String>,
 }

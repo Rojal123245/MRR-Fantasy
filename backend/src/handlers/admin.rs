@@ -2,14 +2,26 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::auth::handler::AppState;
 use crate::error::{AppError, AppResult};
-use crate::models::{
-    AdminPlayerStats, CreateGameweekRequest, MatchWeek, PlayerStatInput,
-};
-use crate::services::points_engine::PointsEngine;
+use crate::handlers::teams::compute_lock_status;
 use crate::models::PlayerPosition;
+use crate::models::{AdminPlayerStats, CreateGameweekRequest, MatchWeek, PlayerStatInput};
+use crate::services::points_engine::PointsEngine;
+
+#[derive(Debug, Deserialize)]
+pub struct SetLineupLockRequest {
+    pub force_unlock: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminLineupLockResponse {
+    pub force_unlock: bool,
+    pub effective_locked: bool,
+    pub unlock_at: Option<String>,
+}
 
 /// POST /api/admin/gameweek
 ///
@@ -82,9 +94,7 @@ pub async fn get_week_stats(
 /// GET /api/admin/gameweeks
 ///
 /// List all gameweeks with their status.
-pub async fn get_gameweeks(
-    State(state): State<AppState>,
-) -> AppResult<Json<Vec<MatchWeek>>> {
+pub async fn get_gameweeks(State(state): State<AppState>) -> AppResult<Json<Vec<MatchWeek>>> {
     let weeks = sqlx::query_as::<_, MatchWeek>(
         "SELECT id, week_number, start_date, end_date, is_active FROM match_weeks ORDER BY week_number",
     )
@@ -158,12 +168,11 @@ pub async fn submit_week_stats(
     let mut tx = state.pool.begin().await?;
 
     for stat in &stats {
-        let position: PlayerPosition = sqlx::query_scalar(
-            "SELECT position FROM players WHERE id = $1",
-        )
-        .bind(stat.player_id)
-        .fetch_one(&mut *tx)
-        .await?;
+        let position: PlayerPosition =
+            sqlx::query_scalar("SELECT position FROM players WHERE id = $1")
+                .bind(stat.player_id)
+                .fetch_one(&mut *tx)
+                .await?;
 
         let total = PointsEngine::calculate(
             &position,
@@ -235,4 +244,51 @@ pub async fn submit_week_stats(
         "players_updated": stats.len(),
         "week": week_number
     })))
+}
+
+/// GET /api/admin/lineup-lock
+///
+/// Returns the current lineup lock override and effective lock status.
+pub async fn get_lineup_lock_control(
+    State(state): State<AppState>,
+) -> AppResult<Json<AdminLineupLockResponse>> {
+    let force_unlock = sqlx::query_scalar::<_, bool>(
+        "SELECT force_unlock FROM lineup_lock_control WHERE id = true",
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .unwrap_or(false);
+
+    let lock = compute_lock_status(&state.pool).await?;
+    Ok(Json(AdminLineupLockResponse {
+        force_unlock,
+        effective_locked: lock.locked,
+        unlock_at: lock.unlock_at,
+    }))
+}
+
+/// PUT /api/admin/lineup-lock
+///
+/// Allows admins to manually unlock/restore the scheduled weekend lock.
+pub async fn set_lineup_lock_control(
+    State(state): State<AppState>,
+    Json(body): Json<SetLineupLockRequest>,
+) -> AppResult<Json<AdminLineupLockResponse>> {
+    sqlx::query(
+        r#"INSERT INTO lineup_lock_control (id, force_unlock)
+           VALUES (true, $1)
+           ON CONFLICT (id) DO UPDATE SET
+             force_unlock = EXCLUDED.force_unlock,
+             updated_at = NOW()"#,
+    )
+    .bind(body.force_unlock)
+    .execute(&state.pool)
+    .await?;
+
+    let lock = compute_lock_status(&state.pool).await?;
+    Ok(Json(AdminLineupLockResponse {
+        force_unlock: body.force_unlock,
+        effective_locked: lock.locked,
+        unlock_at: lock.unlock_at,
+    }))
 }

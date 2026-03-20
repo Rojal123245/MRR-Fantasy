@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Shield, Save, Plus, ChevronDown, AlertCircle, Check, Loader2 } from "lucide-react";
+import { Shield, Save, Plus, ChevronDown, AlertCircle, Check, Loader2, Lock, Unlock } from "lucide-react";
 import Nav from "@/components/nav";
 import {
   createGameweek,
@@ -11,9 +11,12 @@ import {
   submitWeekStats,
   getGameweeks,
   toggleGameweek,
+  getLineupLockControl,
+  setLineupLockControl,
   type AdminPlayerStats,
   type PlayerStatInput,
   type MatchWeek,
+  type AdminLineupLockStatus,
 } from "@/lib/api";
 import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
@@ -51,6 +54,8 @@ export default function AdminPage() {
   const [creating, setCreating] = useState(false);
   const [gameweeks, setGameweeks] = useState<MatchWeek[]>([]);
   const [toggling, setToggling] = useState(false);
+  const [lineupLock, setLineupLock] = useState<AdminLineupLockStatus | null>(null);
+  const [updatingLock, setUpdatingLock] = useState(false);
 
   const activeGameweek = gameweeks.find((gw) => gw.is_active) ?? null;
   const selectedGameweek = gameweeks.find((gw) => gw.week_number === weekNumber) ?? null;
@@ -66,6 +71,17 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadLineupLock = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const data = await getLineupLockControl(token);
+      setLineupLock(data);
+    } catch {
+      // Ignore if lock status fails to load.
+    }
+  }, []);
+
   useEffect(() => {
     if (!isAuthenticated()) {
       router.push("/login");
@@ -77,7 +93,8 @@ export default function AdminPage() {
       return;
     }
     loadGameweeks();
-  }, [router, loadGameweeks]);
+    loadLineupLock();
+  }, [router, loadGameweeks, loadLineupLock]);
 
   const loadStats = useCallback(async () => {
     const token = getToken();
@@ -163,6 +180,28 @@ export default function AdminPage() {
     }
   };
 
+  const handleToggleLineupUnlock = async () => {
+    const token = getToken();
+    if (!token || !lineupLock) return;
+
+    setUpdatingLock(true);
+    setError("");
+    try {
+      const updated = await setLineupLockControl(!lineupLock.force_unlock, token);
+      setLineupLock(updated);
+      setSuccess(
+        updated.force_unlock
+          ? "Manual lineup unlock enabled — scheduled weekend lock is bypassed."
+          : "Manual lineup unlock disabled — scheduled weekend lock is restored."
+      );
+      setTimeout(() => setSuccess(""), 4000);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to update lineup lock");
+    } finally {
+      setUpdatingLock(false);
+    }
+  };
+
   const handleSubmit = async () => {
     const token = getToken();
     if (!token) return;
@@ -230,6 +269,62 @@ export default function AdminPage() {
           <p style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}>
             Enter match stats for each gameweek. Points are calculated automatically.
           </p>
+        </motion.div>
+
+        {/* Lineup lock override control */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.18 }}
+          className="mb-8 p-5 rounded-2xl"
+          style={{
+            background: "var(--bg-card)",
+            border: `1px solid ${lineupLock?.force_unlock ? "rgba(255, 171, 0, 0.35)" : "var(--border-color)"}`,
+          }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            {lineupLock?.force_unlock ? (
+              <Unlock size={16} style={{ color: "var(--accent-amber)" }} />
+            ) : (
+              <Lock size={16} style={{ color: "var(--text-muted)" }} />
+            )}
+            <h3
+              className="text-sm font-bold tracking-wider"
+              style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}
+            >
+              WEEKEND LOCK OVERRIDE
+            </h3>
+          </div>
+          <p className="text-xs mb-4" style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}>
+            Use this only if you need to reopen transfers/lineups during the scheduled Saturday lock window.
+          </p>
+          <div className="flex items-center justify-between p-3 rounded-xl" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-color)" }}>
+            <div>
+              <p className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                {lineupLock?.force_unlock ? "Manual Unlock: ON" : "Manual Unlock: OFF"}
+              </p>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Effective lock status: {lineupLock?.effective_locked ? "Locked" : "Unlocked"}
+              </p>
+            </div>
+            <button
+              onClick={handleToggleLineupUnlock}
+              disabled={updatingLock || !lineupLock}
+              className="relative w-14 h-7 rounded-full cursor-pointer border-none transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                background: lineupLock?.force_unlock ? "var(--accent-amber)" : "rgba(255, 255, 255, 0.1)",
+              }}
+              title={lineupLock?.force_unlock ? "Disable manual unlock" : "Enable manual unlock"}
+            >
+              <div
+                className="absolute top-1 w-5 h-5 rounded-full transition-all duration-300"
+                style={{
+                  background: lineupLock?.force_unlock ? "#000" : "var(--text-muted)",
+                  left: lineupLock?.force_unlock ? "calc(100% - 24px)" : "4px",
+                }}
+              />
+            </button>
+          </div>
         </motion.div>
 
         {/* Gameweek controls */}
@@ -348,7 +443,7 @@ export default function AdminPage() {
             style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}
           >
             {activeGameweek
-              ? "Teams are locked — players can only rearrange their squad or use 1 free transfer per gameweek."
+              ? "Teams are locked — players can use transfers during the gameweek (1 free, then -4 per extra transfer)."
               : "No gameweek is active — players can freely build and modify their teams without restrictions."}
           </p>
 

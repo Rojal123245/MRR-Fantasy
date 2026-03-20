@@ -89,7 +89,7 @@ pub async fn activate_chip(
     Path(team_id): Path<Uuid>,
     Json(body): Json<ActivateChipRequest>,
 ) -> AppResult<Json<ChipStatusResponse>> {
-    let lock = compute_lock_status();
+    let lock = compute_lock_status(&state.pool).await?;
     if lock.locked {
         return Err(AppError::BadRequest(
             "Chips cannot be activated during the lock period (Saturday midnight to Sunday 12:00 PM ET)".to_string(),
@@ -135,14 +135,12 @@ pub async fn activate_chip(
         )));
     }
 
-    sqlx::query(
-        "INSERT INTO team_chips (team_id, chip_type, match_week_id) VALUES ($1, $2, $3)",
-    )
-    .bind(team_id)
-    .bind(&body.chip_type)
-    .bind(active_gw.0)
-    .execute(&state.pool)
-    .await?;
+    sqlx::query("INSERT INTO team_chips (team_id, chip_type, match_week_id) VALUES ($1, $2, $3)")
+        .bind(team_id)
+        .bind(&body.chip_type)
+        .bind(active_gw.0)
+        .execute(&state.pool)
+        .await?;
 
     tracing::info!(
         "Chip '{}' activated for team {} in gameweek {}",

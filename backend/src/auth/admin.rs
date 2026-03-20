@@ -21,13 +21,12 @@ pub async fn admin_middleware(req: Request, next: Next) -> Result<Response, AppE
         .cloned()
         .ok_or_else(|| AppError::Internal("Database pool not available".to_string()))?;
 
-    let is_admin: bool =
-        sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1")
-            .bind(auth.user_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("DB error: {e}")))?
-            .unwrap_or(false);
+    let is_admin: bool = sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1")
+        .bind(auth.user_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("DB error: {e}")))?
+        .unwrap_or(false);
 
     if !is_admin {
         return Err(AppError::Auth("Admin access required".to_string()));

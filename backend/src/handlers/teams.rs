@@ -19,9 +19,10 @@ use crate::models::{
 pub struct LockStatusResponse {
     pub locked: bool,
     pub unlock_at: Option<String>,
+    pub manually_unlocked: bool,
 }
 
-pub fn compute_lock_status() -> LockStatusResponse {
+fn scheduled_lock_status() -> (bool, Option<String>) {
     let now_et = Utc::now().with_timezone(&New_York);
     let weekday = now_et.weekday();
 
@@ -29,7 +30,11 @@ pub fn compute_lock_status() -> LockStatusResponse {
         || (matches!(weekday, chrono::Weekday::Sun) && now_et.hour() < 12);
 
     let unlock_at = if locked {
-        let days_until_sunday = if matches!(weekday, chrono::Weekday::Sat) { 1 } else { 0 };
+        let days_until_sunday = if matches!(weekday, chrono::Weekday::Sat) {
+            1
+        } else {
+            0
+        };
         let unlock = (now_et + chrono::Duration::days(days_until_sunday))
             .date_naive()
             .and_hms_opt(12, 0, 0)
@@ -44,14 +49,33 @@ pub fn compute_lock_status() -> LockStatusResponse {
         None
     };
 
-    LockStatusResponse { locked, unlock_at }
+    (locked, unlock_at)
+}
+
+pub async fn compute_lock_status(pool: &sqlx::PgPool) -> AppResult<LockStatusResponse> {
+    let manually_unlocked = sqlx::query_scalar::<_, bool>(
+        "SELECT force_unlock FROM lineup_lock_control WHERE id = true",
+    )
+    .fetch_optional(pool)
+    .await?
+    .unwrap_or(false);
+
+    let (scheduled_locked, scheduled_unlock_at) = scheduled_lock_status();
+    let locked = scheduled_locked && !manually_unlocked;
+    let unlock_at = if locked { scheduled_unlock_at } else { None };
+
+    Ok(LockStatusResponse {
+        locked,
+        unlock_at,
+        manually_unlocked,
+    })
 }
 
 /// GET /api/teams/lock-status
 ///
 /// Returns whether lineup changes are currently locked.
-pub async fn lock_status() -> AppResult<Json<LockStatusResponse>> {
-    Ok(Json(compute_lock_status()))
+pub async fn lock_status(State(state): State<AppState>) -> AppResult<Json<LockStatusResponse>> {
+    Ok(Json(compute_lock_status(&state.pool).await?))
 }
 
 /// POST /api/teams
@@ -196,7 +220,9 @@ async fn build_team_response(
     .fetch_all(pool)
     .await?;
 
-    let total_points: i32 = starters.iter().map(|s| s.player.total_points).sum();
+    let gross_points: i32 = starters.iter().map(|s| s.player.total_points).sum();
+    let transfer_points_hit = transfer_points_hit(pool, team.id).await?;
+    let total_points = gross_points - transfer_points_hit;
 
     Ok(FantasyTeamWithPlayers {
         id: team.id,
@@ -208,6 +234,23 @@ async fn build_team_response(
         bench,
         total_points,
     })
+}
+
+async fn transfer_points_hit(pool: &sqlx::PgPool, team_id: Uuid) -> Result<i32, AppError> {
+    let hit = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COALESCE(SUM(GREATEST(t.transfer_count - 1, 0) * 4), 0)
+           FROM (
+             SELECT COUNT(*)::int AS transfer_count
+             FROM transfers
+             WHERE team_id = $1
+             GROUP BY match_week_id
+           ) t"#,
+    )
+    .bind(team_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(hit as i32)
 }
 
 /// GET /api/teams/my
@@ -247,7 +290,7 @@ pub async fn set_team_players(
     Path(team_id): Path<Uuid>,
     Json(body): Json<SetPlayersRequest>,
 ) -> AppResult<Json<FantasyTeamWithPlayers>> {
-    let lock = compute_lock_status();
+    let lock = compute_lock_status(&state.pool).await?;
     if lock.locked {
         return Err(AppError::BadRequest(
             "Lineup changes are locked from Saturday midnight to Sunday 12:00 PM ET".to_string(),
@@ -322,7 +365,7 @@ pub async fn set_team_players(
     }
 
     // Verify team ownership
-    let team = sqlx::query_as::<_, FantasyTeam>(
+    let _team = sqlx::query_as::<_, FantasyTeam>(
         "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
     )
     .bind(team_id)
@@ -333,19 +376,17 @@ pub async fn set_team_players(
 
     // When a gameweek is active, only allow rearranging existing squad (no new players).
     // To bring in new players, use the transfer endpoint.
-    let has_active_week = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM match_weeks WHERE is_active = true",
-    )
-    .fetch_one(&state.pool)
-    .await?
-        > 0;
+    let has_active_week =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM match_weeks WHERE is_active = true")
+            .fetch_one(&state.pool)
+            .await?
+            > 0;
 
-    let current_player_ids = sqlx::query_scalar::<_, Uuid>(
-        "SELECT player_id FROM team_players WHERE team_id = $1",
-    )
-    .bind(team_id)
-    .fetch_all(&state.pool)
-    .await?;
+    let current_player_ids =
+        sqlx::query_scalar::<_, Uuid>("SELECT player_id FROM team_players WHERE team_id = $1")
+            .bind(team_id)
+            .fetch_all(&state.pool)
+            .await?;
 
     if has_active_week && !current_player_ids.is_empty() {
         let current_set: std::collections::HashSet<Uuid> =
@@ -357,7 +398,7 @@ pub async fn set_team_players(
             .collect();
         if !new_ids.is_empty() {
             return Err(AppError::BadRequest(
-                "A gameweek is active — you can only rearrange your existing 9 players. Use the Transfer feature to swap 1 player per week."
+                "A gameweek is active — you can only rearrange your existing 9 players. Use the Transfer feature to make swaps."
                     .to_string(),
             ));
         }
@@ -603,12 +644,16 @@ pub async fn get_team_points(
     .fetch_all(&state.pool)
     .await?;
 
-    let total: i32 = starters.iter().map(|s| s.player.total_points).sum();
+    let gross_total: i32 = starters.iter().map(|s| s.player.total_points).sum();
+    let transfer_points_hit = transfer_points_hit(&state.pool, team_id).await?;
+    let total = gross_total - transfer_points_hit;
 
     Ok(Json(serde_json::json!({
         "team_id": team_id,
         "captain_id": team.captain_id,
         "total_points": total,
+        "gross_points": gross_total,
+        "transfer_points_hit": transfer_points_hit,
         "players": starters,
         "bench": bench,
     })))
@@ -616,7 +661,7 @@ pub async fn get_team_points(
 
 /// GET /api/teams/:id/transfer-status
 ///
-/// Check whether the user has a transfer available for the current gameweek.
+/// Check transfer usage and points hit for the current gameweek.
 pub async fn get_transfer_status(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
@@ -647,62 +692,77 @@ pub async fn get_transfer_status(
         return Ok(Json(TransferStatusResponse {
             transfer_available: false,
             active_gameweek: None,
+            transfers_used: 0,
+            free_transfers: 1,
+            extra_transfers: 0,
+            points_hit: 0,
             transferred_out: None,
             transferred_in: None,
         }));
     };
 
-    let existing = sqlx::query_as::<_, TransferRecord>(
-        "SELECT id, team_id, match_week_id, player_out_id, player_in_id, created_at FROM transfers WHERE team_id = $1 AND match_week_id = $2",
+    let transfers_used = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM transfers WHERE team_id = $1 AND match_week_id = $2",
+    )
+    .bind(team_id)
+    .bind(week.id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    let latest_transfer = sqlx::query_as::<_, TransferRecord>(
+        "SELECT id, team_id, match_week_id, player_out_id, player_in_id, created_at
+         FROM transfers
+         WHERE team_id = $1 AND match_week_id = $2
+         ORDER BY created_at DESC
+         LIMIT 1",
     )
     .bind(team_id)
     .bind(week.id)
     .fetch_optional(&state.pool)
     .await?;
 
-    match existing {
-        Some(transfer) => {
-            let out_name = sqlx::query_scalar::<_, String>(
-                "SELECT name FROM players WHERE id = $1",
-            )
+    let (transferred_out, transferred_in) = if let Some(transfer) = latest_transfer {
+        let out_name = sqlx::query_scalar::<_, String>("SELECT name FROM players WHERE id = $1")
             .bind(transfer.player_out_id)
             .fetch_optional(&state.pool)
             .await?;
-
-            let in_name = sqlx::query_scalar::<_, String>(
-                "SELECT name FROM players WHERE id = $1",
-            )
+        let in_name = sqlx::query_scalar::<_, String>("SELECT name FROM players WHERE id = $1")
             .bind(transfer.player_in_id)
             .fetch_optional(&state.pool)
             .await?;
+        (out_name, in_name)
+    } else {
+        (None, None)
+    };
 
-            Ok(Json(TransferStatusResponse {
-                transfer_available: false,
-                active_gameweek: Some(week.week_number),
-                transferred_out: out_name,
-                transferred_in: in_name,
-            }))
-        }
-        None => Ok(Json(TransferStatusResponse {
-            transfer_available: true,
-            active_gameweek: Some(week.week_number),
-            transferred_out: None,
-            transferred_in: None,
-        })),
-    }
+    let transfers_used_i32 = transfers_used as i32;
+    let free_transfers = 1;
+    let extra_transfers = (transfers_used_i32 - free_transfers).max(0);
+    let points_hit = extra_transfers * 4;
+
+    Ok(Json(TransferStatusResponse {
+        transfer_available: true,
+        active_gameweek: Some(week.week_number),
+        transfers_used: transfers_used_i32,
+        free_transfers,
+        extra_transfers,
+        points_hit,
+        transferred_out,
+        transferred_in,
+    }))
 }
 
 /// POST /api/teams/:id/transfer
 ///
 /// Transfer 1 player: swap player_out (must be in squad) for player_in (new player).
-/// Limited to 1 transfer per active gameweek. Transfers do not accumulate.
+/// First transfer each active gameweek is free; each additional transfer costs -4 points.
 pub async fn transfer_player(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
     Path(team_id): Path<Uuid>,
     Json(body): Json<TransferRequest>,
 ) -> AppResult<Json<FantasyTeamWithPlayers>> {
-    let lock = compute_lock_status();
+    let lock = compute_lock_status(&state.pool).await?;
     if lock.locked {
         return Err(AppError::BadRequest(
             "Transfers are locked from Saturday midnight to Sunday 12:00 PM ET".to_string(),
@@ -731,22 +791,10 @@ pub async fn transfer_player(
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| {
-        AppError::BadRequest("No active gameweek. Transfers are only available during a gameweek.".to_string())
+        AppError::BadRequest(
+            "No active gameweek. Transfers are only available during a gameweek.".to_string(),
+        )
     })?;
-
-    let already_transferred = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM transfers WHERE team_id = $1 AND match_week_id = $2",
-    )
-    .bind(team_id)
-    .bind(active_week.id)
-    .fetch_one(&state.pool)
-    .await?;
-
-    if already_transferred > 0 {
-        return Err(AppError::BadRequest(
-            "You have already used your 1 free transfer this gameweek".to_string(),
-        ));
-    }
 
     if body.player_out_id == body.player_in_id {
         return Err(AppError::BadRequest(
@@ -891,7 +939,8 @@ pub async fn transfer_player(
 
         if outgoing_is_gk && !incoming_is_gk && bench_gks_without_out == 0 {
             return Err(AppError::BadRequest(
-                "Bench must keep exactly 1 GK. Transfer in a GK to replace the bench GK.".to_string(),
+                "Bench must keep exactly 1 GK. Transfer in a GK to replace the bench GK."
+                    .to_string(),
             ));
         }
         if !outgoing_is_gk && incoming_is_gk && bench_gks_without_out >= 1 {
