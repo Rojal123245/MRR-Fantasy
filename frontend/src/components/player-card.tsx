@@ -1,8 +1,9 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { User, Zap, Crown } from "lucide-react";
+import { Zap, Crown } from "lucide-react";
 import type { Player, Position } from "@/lib/api";
+import PlayerAvatar from "@/components/player-avatar";
 
 interface PlayerCardProps {
   player: Player;
@@ -44,11 +45,13 @@ export default function PlayerCard({ player, selected, assignedPosition, onSelec
       }} />
 
       <div className="relative flex items-center gap-3">
-        {/* Player avatar placeholder */}
+        {/* Player avatar */}
         <div className="relative">
-          <div className={`w-12 h-12 rounded-full flex items-center justify-center ${player.is_top_player ? "ring-2 ring-amber-400/60" : ""}`} style={{ background: "var(--bg-elevated)" }}>
-            <User size={24} style={{ color: player.is_top_player ? "#fbbf24" : "var(--text-muted)" }} />
-          </div>
+          <PlayerAvatar
+            playerName={player.name}
+            sizeClassName="w-12 h-12"
+            className={player.is_top_player ? "ring-2 ring-amber-400/60" : ""}
+          />
           {player.is_top_player && (
             <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(135deg, #fbbf24, #f59e0b)", boxShadow: "0 0 8px rgba(251,191,36,0.5)" }}>
               <Crown size={11} style={{ color: "#1a1a2e" }} strokeWidth={2.5} />
