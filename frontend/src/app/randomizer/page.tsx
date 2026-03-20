@@ -128,7 +128,7 @@ export default function RandomizerPage() {
     return { advancePool, gkPool, regularPool, missingAdvance, missingGk };
   }, [players, selectedPlayers]);
 
-  const maxTeamsPossible = Math.min(categorizedPools.advancePool.length, categorizedPools.gkPool.length);
+  const maxTeamsPossible = categorizedPools.advancePool.length;
 
   const togglePlayer = (playerId: string) => {
     setSelectedPlayerIds((prev) =>
@@ -186,13 +186,6 @@ export default function RandomizerPage() {
       return;
     }
 
-    if (categorizedPools.gkPool.length < teamCount) {
-      setError(
-        `Not enough goalkeepers for ${teamCount} teams. Available: ${categorizedPools.gkPool.length}.`
-      );
-      return;
-    }
-
     const requiredPlayers = teamCount * 6;
     if (selectedPlayers.length < requiredPlayers) {
       setError(
@@ -207,12 +200,17 @@ export default function RandomizerPage() {
 
     for (let i = 0; i < teamCount; i += 1) {
       nextTeams[i].push({ player: shuffledAdvance[i], category: "Advance" });
-      nextTeams[i].push({ player: shuffledGk[i], category: "GK" });
+    }
+
+    const teamOrderForGk = shuffleArray(Array.from({ length: teamCount }, (_, i) => i));
+    const guaranteedGkCount = Math.min(teamCount, shuffledGk.length);
+    for (let i = 0; i < guaranteedGkCount; i += 1) {
+      nextTeams[teamOrderForGk[i]].push({ player: shuffledGk[i], category: "GK" });
     }
 
     const remainingPool: TeamSlot[] = [
       ...shuffledAdvance.slice(teamCount).map((player) => ({ player, category: "Advance" as const })),
-      ...shuffledGk.slice(teamCount).map((player) => ({ player, category: "GK" as const })),
+      ...shuffledGk.slice(guaranteedGkCount).map((player) => ({ player, category: "GK" as const })),
       ...categorizedPools.regularPool.map((player) => ({ player, category: "Regular" as const })),
     ];
     const shuffledRemainingPool = shuffleArray(remainingPool);
@@ -244,8 +242,8 @@ export default function RandomizerPage() {
             FUTSAL <span style={{ color: "var(--accent-green)" }}>RANDOMIZER</span>
           </h1>
           <p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>
-            Select the players who came to play, then create balanced teams: exactly 1 Advance and 1 GK
-            per team, and remaining players spread evenly.
+            Select the players who came to play, then create balanced teams of 6: 1 Advance per team,
+            and GK assigned randomly when available.
           </p>
         </motion.div>
 
