@@ -220,9 +220,7 @@ async fn build_team_response(
     .fetch_all(pool)
     .await?;
 
-    let gross_points: i32 = starters.iter().map(|s| s.player.total_points).sum();
-    let transfer_points_hit = transfer_points_hit(pool, team.id).await?;
-    let total_points = gross_points - transfer_points_hit;
+    let total_points = team_total_points(pool, team.id).await?;
 
     Ok(FantasyTeamWithPlayers {
         id: team.id,
@@ -236,21 +234,15 @@ async fn build_team_response(
     })
 }
 
-async fn transfer_points_hit(pool: &sqlx::PgPool, team_id: Uuid) -> Result<i32, AppError> {
-    let hit = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COALESCE(SUM(GREATEST(t.transfer_count - 1, 0) * 4), 0)
-           FROM (
-             SELECT COUNT(*)::int AS transfer_count
-             FROM transfers
-             WHERE team_id = $1
-             GROUP BY match_week_id
-           ) t"#,
+async fn team_total_points(pool: &sqlx::PgPool, team_id: Uuid) -> Result<i32, AppError> {
+    let total = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(total_points), 0) FROM team_gameweek_points WHERE team_id = $1",
     )
     .bind(team_id)
     .fetch_one(pool)
     .await?;
 
-    Ok(hit as i32)
+    Ok(total as i32)
 }
 
 /// GET /api/teams/my
@@ -644,16 +636,12 @@ pub async fn get_team_points(
     .fetch_all(&state.pool)
     .await?;
 
-    let gross_total: i32 = starters.iter().map(|s| s.player.total_points).sum();
-    let transfer_points_hit = transfer_points_hit(&state.pool, team_id).await?;
-    let total = gross_total - transfer_points_hit;
+    let total = team_total_points(&state.pool, team_id).await?;
 
     Ok(Json(serde_json::json!({
         "team_id": team_id,
         "captain_id": team.captain_id,
         "total_points": total,
-        "gross_points": gross_total,
-        "transfer_points_hit": transfer_points_hit,
         "players": starters,
         "bench": bench,
     })))
