@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import type { Player, Position } from "@/lib/api";
+import PlayerAvatar from "@/components/player-avatar";
 
 export interface FormationPlayer {
   player: Player;
@@ -158,16 +159,23 @@ export default function Formation({ players, captainId, onRemove }: FormationPro
             >
               <div className="relative">
                 <div
-                  className="w-11 h-11 rounded-full flex items-center justify-center text-[10px] font-bold border-2 transition-all group-hover:scale-110"
+                  className="relative rounded-full border-2 transition-all group-hover:scale-110"
                   style={{
-                    background: captainId === slot.fp.player.id ? "rgba(255, 171, 0, 0.3)" : "rgba(0, 230, 118, 0.2)",
                     borderColor: captainId === slot.fp.player.id ? "#ffab00" : "var(--accent-green)",
-                    color: captainId === slot.fp.player.id ? "#ffab00" : "var(--accent-green)",
-                    fontFamily: "var(--font-display)",
+                    boxShadow: captainId === slot.fp.player.id ? "0 0 10px rgba(251,191,36,0.45)" : "none",
                   }}
                 >
-                  {slot.fp.assignedPosition}
+                  <PlayerAvatar
+                    playerName={slot.fp.player.name}
+                    sizeClassName="w-11 h-11"
+                    className={captainId === slot.fp.player.id ? "ring-2 ring-amber-400/40" : ""}
+                  />
                 </div>
+                <span
+                  className={`absolute -bottom-1 left-1/2 -translate-x-1/2 ${positionBadgeClass[slot.fp.assignedPosition]} text-[8px] font-bold px-1.5 py-0.5 rounded-full text-white`}
+                >
+                  {slot.fp.assignedPosition}
+                </span>
                 {captainId === slot.fp.player.id && (
                   <div
                     className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-black"
