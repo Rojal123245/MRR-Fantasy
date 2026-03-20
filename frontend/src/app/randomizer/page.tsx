@@ -193,20 +193,44 @@ export default function RandomizerPage() {
       return;
     }
 
+    const requiredPlayers = teamCount * 6;
+    if (selectedPlayers.length < requiredPlayers) {
+      setError(
+        `Need at least ${requiredPlayers} selected players to create ${teamCount} teams of 6. Selected: ${selectedPlayers.length}.`
+      );
+      return;
+    }
+
     const nextTeams: TeamSlot[][] = Array.from({ length: teamCount }, () => []);
-    const shuffledAdvance = shuffleArray(categorizedPools.advancePool).slice(0, teamCount);
-    const shuffledGk = shuffleArray(categorizedPools.gkPool).slice(0, teamCount);
-    const shuffledRegular = shuffleArray(categorizedPools.regularPool);
+    const shuffledAdvance = shuffleArray(categorizedPools.advancePool);
+    const shuffledGk = shuffleArray(categorizedPools.gkPool);
 
     for (let i = 0; i < teamCount; i += 1) {
       nextTeams[i].push({ player: shuffledAdvance[i], category: "Advance" });
       nextTeams[i].push({ player: shuffledGk[i], category: "GK" });
     }
 
-    shuffledRegular.forEach((player, idx) => {
-      const targetTeam = idx % teamCount;
-      nextTeams[targetTeam].push({ player, category: "Regular" });
-    });
+    const remainingPool: TeamSlot[] = [
+      ...shuffledAdvance.slice(teamCount).map((player) => ({ player, category: "Advance" as const })),
+      ...shuffledGk.slice(teamCount).map((player) => ({ player, category: "GK" as const })),
+      ...categorizedPools.regularPool.map((player) => ({ player, category: "Regular" as const })),
+    ];
+    const shuffledRemainingPool = shuffleArray(remainingPool);
+
+    let remainingIdx = 0;
+    for (let slot = 0; slot < 4; slot += 1) {
+      for (let team = 0; team < teamCount; team += 1) {
+        if (remainingIdx >= shuffledRemainingPool.length) break;
+        nextTeams[team].push(shuffledRemainingPool[remainingIdx]);
+        remainingIdx += 1;
+      }
+    }
+
+    if (nextTeams.some((team) => team.length < 6)) {
+      setError("Could not create complete teams of 6 players. Please add/select more players.");
+      setTeams([]);
+      return;
+    }
 
     setTeams(nextTeams.map((team) => shuffleArray(team)));
   };
@@ -351,7 +375,7 @@ export default function RandomizerPage() {
                 className="input-field"
               />
               <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
-                Max possible from selected players: {maxTeamsPossible}
+                Max possible from selected players: {Math.min(maxTeamsPossible, Math.floor(selectedPlayers.length / 6))}
               </p>
             </div>
             <button
