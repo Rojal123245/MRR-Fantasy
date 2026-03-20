@@ -4,13 +4,14 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Trophy, Users, Shield, LayoutDashboard, LogOut, Menu, X, Settings } from "lucide-react";
+import { Trophy, Users, Shield, LayoutDashboard, LogOut, Menu, X, Settings, Shuffle } from "lucide-react";
 import { getUser, clearAuth, isAuthenticated } from "@/lib/auth";
 import type { User } from "@/lib/api";
 
 const baseNavLinks = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/team", label: "My Team", icon: Shield },
+  { href: "/randomizer", label: "Randomizer", icon: Shuffle },
   { href: "/league", label: "Leagues", icon: Users },
   { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
 ];
