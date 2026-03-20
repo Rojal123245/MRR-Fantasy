@@ -7,6 +7,7 @@ import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Arm
 import Nav from "@/components/nav";
 import PlayerCard from "@/components/player-card";
 import Formation, { type FormationPlayer, getFormationLabel, getMissingPositions } from "@/components/formation";
+import PlayerAvatar from "@/components/player-avatar";
 import {
   getPlayers,
   getMyTeam,
@@ -830,6 +831,7 @@ export default function TeamBuilderPage() {
                       {fp.player.is_top_player && (
                         <Crown size={12} style={{ color: "#fbbf24", flexShrink: 0 }} />
                       )}
+                      <PlayerAvatar playerName={fp.player.name} sizeClassName="w-7 h-7" />
                       <span className="flex-1 truncate">{fp.player.name}</span>
                       <span className="text-[10px] font-bold" style={{ color: "var(--text-muted)" }}>
                         ${fp.player.price}
@@ -1124,6 +1126,7 @@ export default function TeamBuilderPage() {
                     {player.is_top_player && (
                       <Crown size={12} style={{ color: "#fbbf24", flexShrink: 0 }} />
                     )}
+                    <PlayerAvatar playerName={player.name} sizeClassName="w-7 h-7" />
                     <span className="flex-1 truncate">{player.name}</span>
                     <span className="text-[10px] font-bold" style={{ color: "var(--text-muted)" }}>
                       ${player.price}
