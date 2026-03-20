@@ -262,6 +262,10 @@ export function deactivateChip(
 export interface TransferStatus {
   transfer_available: boolean;
   active_gameweek: number | null;
+  transfers_used: number;
+  free_transfers: number;
+  extra_transfers: number;
+  points_hit: number;
   transferred_out: string | null;
   transferred_in: string | null;
 }
@@ -292,10 +296,29 @@ export function transferPlayer(
 export interface LockStatus {
   locked: boolean;
   unlock_at: string | null;
+  manually_unlocked: boolean;
 }
 
 export function getLockStatus() {
   return apiFetch<LockStatus>("/api/teams/lock-status");
+}
+
+export interface AdminLineupLockStatus {
+  force_unlock: boolean;
+  effective_locked: boolean;
+  unlock_at: string | null;
+}
+
+export function getLineupLockControl(token: string) {
+  return apiFetch<AdminLineupLockStatus>("/api/admin/lineup-lock", { token });
+}
+
+export function setLineupLockControl(forceUnlock: boolean, token: string) {
+  return apiFetch<AdminLineupLockStatus>("/api/admin/lineup-lock", {
+    method: "PUT",
+    body: { force_unlock: forceUnlock },
+    token,
+  });
 }
 
 // Player leaderboard with aggregated stats

@@ -6,7 +6,10 @@ use axum::{extract::State, Json};
 use sqlx::PgPool;
 
 use crate::error::{AppError, AppResult};
-use crate::models::{AuthResponse, LoginRequest, MessageResponse, RegisterRequest, ResetPasswordRequest, User, UserResponse};
+use crate::models::{
+    AuthResponse, LoginRequest, MessageResponse, RegisterRequest, ResetPasswordRequest, User,
+    UserResponse,
+};
 
 use super::jwt::create_token;
 

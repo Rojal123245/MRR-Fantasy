@@ -381,12 +381,12 @@ export default function TeamBuilderPage() {
   const isGameweekActive = transferStatus?.active_gameweek != null;
   const hasExistingSquad = selected.length === 6 && bench.length === 3;
   const transferMode = isGameweekActive && hasExistingSquad;
+  const transfersUsed = transferStatus?.transfers_used ?? 0;
+  const freeTransfers = transferStatus?.free_transfers ?? 1;
+  const extraTransfers = transferStatus?.extra_transfers ?? 0;
+  const pointsHit = transferStatus?.points_hit ?? 0;
 
   const handleStartTransfer = (player: Player, isBench: boolean) => {
-    if (!transferStatus?.transfer_available) {
-      setError("You have already used your 1 free transfer this gameweek");
-      return;
-    }
     if (lockStatus?.locked) {
       setError("Transfers are locked until Sunday 12:00 PM ET");
       return;
@@ -555,7 +555,7 @@ export default function TeamBuilderPage() {
                 PRE-SEASON — FREE MODIFICATIONS
               </p>
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                No gameweek is active yet. You can freely add, remove, and swap players without restrictions. Once the admin activates Gameweek 1, your squad will be locked and you&apos;ll get 1 free transfer per gameweek.
+                No gameweek is active yet. You can freely add, remove, and swap players without restrictions. Once the admin activates Gameweek 1, your squad will be locked and you&apos;ll get 1 free transfer per gameweek (extra transfers cost -4 each).
               </p>
             </div>
           </motion.div>
@@ -591,36 +591,31 @@ export default function TeamBuilderPage() {
             animate={{ opacity: 1, y: 0 }}
             className="flex items-center gap-3 p-4 rounded-lg mb-6"
             style={{
-              background: transferStatus?.transfer_available
-                ? "rgba(0, 230, 118, 0.08)"
-                : "rgba(255, 171, 0, 0.08)",
-              border: transferStatus?.transfer_available
-                ? "1px solid rgba(0, 230, 118, 0.3)"
-                : "1px solid rgba(255, 171, 0, 0.3)",
+              background: extraTransfers > 0 ? "rgba(255, 171, 0, 0.08)" : "rgba(0, 230, 118, 0.08)",
+              border: extraTransfers > 0 ? "1px solid rgba(255, 171, 0, 0.3)" : "1px solid rgba(0, 230, 118, 0.3)",
             }}
           >
             <ArrowLeftRight
               size={20}
               style={{
-                color: transferStatus?.transfer_available ? "var(--accent-green)" : "var(--accent-amber)",
+                color: extraTransfers > 0 ? "var(--accent-amber)" : "var(--accent-green)",
                 flexShrink: 0,
               }}
             />
             <div className="flex-1">
-              <p className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: transferStatus?.transfer_available ? "var(--accent-green)" : "var(--accent-amber)" }}>
-                {transferStatus?.transfer_available
-                  ? `GAMEWEEK ${transferStatus.active_gameweek} — 1 FREE TRANSFER`
-                  : `GAMEWEEK ${transferStatus?.active_gameweek} — TRANSFER USED`}
+              <p className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: extraTransfers > 0 ? "var(--accent-amber)" : "var(--accent-green)" }}>
+                {`GAMEWEEK ${transferStatus?.active_gameweek} — ${transfersUsed} TRANSFERS (${freeTransfers} FREE)`}
               </p>
-              {transferStatus?.transfer_available ? (
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  {transferOutPlayer
-                    ? `Select a replacement for ${transferOutPlayer.name} from the player list`
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                {transferOutPlayer
+                  ? `Select a replacement for ${transferOutPlayer.name} from the player list`
+                  : pointsHit > 0
+                    ? `${extraTransfers} extra transfer${extraTransfers > 1 ? "s" : ""} this week: -${pointsHit} points hit`
                     : "Tap a squad player below to start a transfer"}
-                </p>
-              ) : (
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  {transferStatus?.transferred_out} out, {transferStatus?.transferred_in} in
+              </p>
+              {transferStatus?.transferred_out && transferStatus?.transferred_in && (
+                <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                  Latest: {transferStatus.transferred_out} out, {transferStatus.transferred_in} in
                 </p>
               )}
             </div>
@@ -845,7 +840,7 @@ export default function TeamBuilderPage() {
                             e.stopPropagation();
                             handleStartTransfer(fp.player, false);
                           }}
-                          disabled={!transferStatus?.transfer_available || transferOutPlayer?.id === fp.player.id}
+                          disabled={transferOutPlayer?.id === fp.player.id}
                           className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-30"
                           style={{
                             fontFamily: "var(--font-display)",
@@ -1139,7 +1134,7 @@ export default function TeamBuilderPage() {
                           e.stopPropagation();
                           handleStartTransfer(player, true);
                         }}
-                        disabled={!transferStatus?.transfer_available || transferOutPlayer?.id === player.id}
+                        disabled={transferOutPlayer?.id === player.id}
                         className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-30"
                         style={{
                           fontFamily: "var(--font-display)",

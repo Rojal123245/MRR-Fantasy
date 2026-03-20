@@ -85,8 +85,7 @@ async fn main() {
         .route("/player/:id", get(handlers::points::get_player_points));
 
     // Team routes (mixed: lock-status is public, rest protected)
-    let team_public_routes = Router::new()
-        .route("/lock-status", get(handlers::teams::lock_status));
+    let team_public_routes = Router::new().route("/lock-status", get(handlers::teams::lock_status));
 
     let team_protected_routes = Router::new()
         .route("/", post(handlers::teams::create_team))
@@ -136,9 +135,23 @@ async fn main() {
     let admin_routes = Router::new()
         .route("/gameweek", post(handlers::admin::create_gameweek))
         .route("/gameweeks", get(handlers::admin::get_gameweeks))
-        .route("/gameweek/:week/toggle", put(handlers::admin::toggle_gameweek))
-        .route("/gameweek/:week/stats", get(handlers::admin::get_week_stats))
-        .route("/gameweek/:week/stats", post(handlers::admin::submit_week_stats))
+        .route(
+            "/gameweek/:week/toggle",
+            put(handlers::admin::toggle_gameweek),
+        )
+        .route(
+            "/gameweek/:week/stats",
+            get(handlers::admin::get_week_stats),
+        )
+        .route(
+            "/gameweek/:week/stats",
+            post(handlers::admin::submit_week_stats),
+        )
+        .route(
+            "/lineup-lock",
+            get(handlers::admin::get_lineup_lock_control)
+                .put(handlers::admin::set_lineup_lock_control),
+        )
         .layer(middleware::from_fn(auth::admin::admin_middleware))
         .layer(middleware::from_fn(auth::middleware::auth_middleware))
         .layer(Extension(state.pool.clone()))
