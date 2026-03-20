@@ -128,7 +128,10 @@ export default function RandomizerPage() {
     return { advancePool, gkPool, regularPool, missingAdvance, missingGk };
   }, [players, selectedPlayers]);
 
-  const maxTeamsPossible = categorizedPools.advancePool.length;
+  const maxBalancedTeamsPossible = Math.min(
+    categorizedPools.advancePool.length,
+    Math.floor(selectedPlayers.length / 6)
+  );
 
   const togglePlayer = (playerId: string) => {
     setSelectedPlayerIds((prev) =>
@@ -179,58 +182,72 @@ export default function RandomizerPage() {
       return;
     }
 
-    if (categorizedPools.advancePool.length < teamCount) {
-      setError(
-        `Not enough advance players for ${teamCount} teams. Available: ${categorizedPools.advancePool.length}.`
-      );
-      return;
-    }
-
-    const requiredPlayers = teamCount * 6;
-    if (selectedPlayers.length < requiredPlayers) {
-      setError(
-        `Need at least ${requiredPlayers} selected players to create ${teamCount} teams of 6. Selected: ${selectedPlayers.length}.`
-      );
+    if (selectedPlayers.length < teamCount) {
+      setError("Selected players are fewer than number of teams.");
       return;
     }
 
     const nextTeams: TeamSlot[][] = Array.from({ length: teamCount }, () => []);
     const shuffledAdvance = shuffleArray(categorizedPools.advancePool);
     const shuffledGk = shuffleArray(categorizedPools.gkPool);
+    const balancedTeamCount = Math.min(teamCount, Math.floor(selectedPlayers.length / 6), shuffledAdvance.length);
 
-    for (let i = 0; i < teamCount; i += 1) {
+    for (let i = 0; i < balancedTeamCount; i += 1) {
       nextTeams[i].push({ player: shuffledAdvance[i], category: "Advance" });
     }
 
-    const teamOrderForGk = shuffleArray(Array.from({ length: teamCount }, (_, i) => i));
-    const guaranteedGkCount = Math.min(teamCount, shuffledGk.length);
+    const teamOrderForGk = shuffleArray(Array.from({ length: balancedTeamCount }, (_, i) => i));
+    const guaranteedGkCount = Math.min(balancedTeamCount, shuffledGk.length);
     for (let i = 0; i < guaranteedGkCount; i += 1) {
       nextTeams[teamOrderForGk[i]].push({ player: shuffledGk[i], category: "GK" });
     }
 
     const remainingPool: TeamSlot[] = [
-      ...shuffledAdvance.slice(teamCount).map((player) => ({ player, category: "Advance" as const })),
+      ...shuffledAdvance.slice(balancedTeamCount).map((player) => ({ player, category: "Advance" as const })),
       ...shuffledGk.slice(guaranteedGkCount).map((player) => ({ player, category: "GK" as const })),
       ...categorizedPools.regularPool.map((player) => ({ player, category: "Regular" as const })),
     ];
     const shuffledRemainingPool = shuffleArray(remainingPool);
 
     let remainingIdx = 0;
-    for (let slot = 0; slot < 4; slot += 1) {
-      for (let team = 0; team < teamCount; team += 1) {
+    while (remainingIdx < shuffledRemainingPool.length) {
+      const fillOrder = shuffleArray(Array.from({ length: balancedTeamCount }, (_, i) => i));
+      let filledAny = false;
+      for (const team of fillOrder) {
         if (remainingIdx >= shuffledRemainingPool.length) break;
+        if (nextTeams[team].length >= 6) continue;
         nextTeams[team].push(shuffledRemainingPool[remainingIdx]);
         remainingIdx += 1;
+        filledAny = true;
       }
+      if (!filledAny) break;
     }
 
-    if (nextTeams.some((team) => team.length < 6)) {
-      setError("Could not create complete teams of 6 players. Please add/select more players.");
+    const remainingTeamIndices = Array.from(
+      { length: Math.max(teamCount - balancedTeamCount, 0) },
+      (_, idx) => idx + balancedTeamCount
+    );
+
+    let teamCycle = 0;
+    while (remainingIdx < shuffledRemainingPool.length && remainingTeamIndices.length > 0) {
+      const targetTeam = remainingTeamIndices[teamCycle % remainingTeamIndices.length];
+      nextTeams[targetTeam].push(shuffledRemainingPool[remainingIdx]);
+      remainingIdx += 1;
+      teamCycle += 1;
+    }
+
+    if (nextTeams.every((team) => team.length === 0)) {
+      setError("Could not create teams from the selected players.");
       setTeams([]);
       return;
     }
 
-    setTeams(nextTeams.map((team) => shuffleArray(team)));
+    if (balancedTeamCount < teamCount) {
+      const unbalanced = teamCount - balancedTeamCount;
+      setError(`${balancedTeamCount} balanced team(s) created. ${unbalanced} team(s) include remaining players.`);
+    }
+
+    setTeams(nextTeams.map((team) => shuffleArray(team)).filter((team) => team.length > 0));
   };
 
   return (
@@ -242,8 +259,8 @@ export default function RandomizerPage() {
             FUTSAL <span style={{ color: "var(--accent-green)" }}>RANDOMIZER</span>
           </h1>
           <p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>
-            Select the players who came to play, then create balanced teams of 6: 1 Advance per team,
-            and GK assigned randomly when available.
+            Select the players who came to play, then create balanced 6-player teams first (1 Advance each,
+            GK when available). Any extra requested team gets the remaining players.
           </p>
         </motion.div>
 
@@ -373,7 +390,7 @@ export default function RandomizerPage() {
                 className="input-field"
               />
               <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
-                Max possible from selected players: {Math.min(maxTeamsPossible, Math.floor(selectedPlayers.length / 6))}
+                Max balanced teams possible: {maxBalancedTeamsPossible}
               </p>
             </div>
             <button
