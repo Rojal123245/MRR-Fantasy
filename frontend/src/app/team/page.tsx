@@ -457,7 +457,7 @@ export default function TeamBuilderPage() {
   };
 
   const isSquadComplete = selected.length === 6 && bench.length === 3 && missingPositions.length === 0 && !!captainId;
-  const canQuickSwap = !transferMode && !lockStatus?.locked && selected.length === 6 && bench.length === 3;
+  const canQuickSwap = !lockStatus?.locked && selected.length === 6 && bench.length === 3;
 
   useEffect(() => {
     if (!canQuickSwap) {
@@ -591,6 +591,8 @@ export default function TeamBuilderPage() {
                 onClick={() => {
                   setQuickSwapMode((prev) => !prev);
                   setSelectedBenchForSwap(null);
+                  setTransferOutPlayer(null);
+                  setError("");
                 }}
                 className="px-3 py-2 rounded-lg text-xs font-bold cursor-pointer border-none transition-all"
                 style={{
@@ -1005,7 +1007,18 @@ export default function TeamBuilderPage() {
                       <span className="text-[10px] font-bold" style={{ color: "var(--text-muted)" }}>
                         ${fp.player.price}
                       </span>
-                      {transferMode ? (
+                      {quickSwapMode ? (
+                        <span
+                          className="text-[10px] font-bold px-2 py-1 rounded"
+                          style={{
+                            fontFamily: "var(--font-display)",
+                            background: isSwapTarget ? "rgba(0,230,118,0.15)" : "rgba(255,255,255,0.05)",
+                            color: isSwapTarget ? "var(--accent-green)" : "var(--text-muted)",
+                          }}
+                        >
+                          {selectedBenchForSwap ? (isSwapTarget ? "SWAP" : "LOCKED") : "PICK BENCH"}
+                        </span>
+                      ) : transferMode ? (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1026,17 +1039,6 @@ export default function TeamBuilderPage() {
                           <ArrowLeftRight size={10} />
                           {transferOutPlayer?.id === fp.player.id ? "OUT" : "SWAP"}
                         </button>
-                      ) : quickSwapMode ? (
-                        <span
-                          className="text-[10px] font-bold px-2 py-1 rounded"
-                          style={{
-                            fontFamily: "var(--font-display)",
-                            background: isSwapTarget ? "rgba(0,230,118,0.15)" : "rgba(255,255,255,0.05)",
-                            color: isSwapTarget ? "var(--accent-green)" : "var(--text-muted)",
-                          }}
-                        >
-                          {selectedBenchForSwap ? (isSwapTarget ? "SWAP" : "LOCKED") : "PICK BENCH"}
-                        </span>
                       ) : (
                         <button
                           onClick={() => handleRemoveStarter(fp.player)}
@@ -1317,7 +1319,18 @@ export default function TeamBuilderPage() {
                     <span className="text-[10px] font-bold" style={{ color: "var(--text-muted)" }}>
                       ${player.price}
                     </span>
-                    {transferMode ? (
+                    {quickSwapMode ? (
+                      <span
+                        className="text-[10px] font-bold px-2 py-1 rounded"
+                        style={{
+                          fontFamily: "var(--font-display)",
+                          background: selectedBenchForSwap === player.id ? "rgba(129,140,248,0.26)" : "rgba(255,255,255,0.05)",
+                          color: selectedBenchForSwap === player.id ? "#c7d2fe" : "var(--text-muted)",
+                        }}
+                      >
+                        {selectedBenchForSwap === player.id ? "SELECTED" : "TAP"}
+                      </span>
+                    ) : transferMode ? (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1338,17 +1351,6 @@ export default function TeamBuilderPage() {
                         <ArrowLeftRight size={10} />
                         {transferOutPlayer?.id === player.id ? "OUT" : "SWAP"}
                       </button>
-                    ) : quickSwapMode ? (
-                      <span
-                        className="text-[10px] font-bold px-2 py-1 rounded"
-                        style={{
-                          fontFamily: "var(--font-display)",
-                          background: selectedBenchForSwap === player.id ? "rgba(129,140,248,0.26)" : "rgba(255,255,255,0.05)",
-                          color: selectedBenchForSwap === player.id ? "#c7d2fe" : "var(--text-muted)",
-                        }}
-                      >
-                        {selectedBenchForSwap === player.id ? "SELECTED" : "TAP"}
-                      </span>
                     ) : (
                       <button
                         onClick={() => handleRemoveBench(player)}
@@ -1507,7 +1509,13 @@ export default function TeamBuilderPage() {
         >
           <div className="max-w-7xl mx-auto grid grid-cols-3 gap-2">
             <button
-              onClick={() => setQuickSwapMode((prev) => (canQuickSwap ? !prev : prev))}
+              onClick={() => {
+                if (!canQuickSwap) return;
+                setQuickSwapMode((prev) => !prev);
+                setTransferOutPlayer(null);
+                setSelectedBenchForSwap(null);
+                setError("");
+              }}
               disabled={!canQuickSwap}
               className="px-3 py-2 rounded-lg text-[11px] font-bold border-none cursor-pointer disabled:opacity-40"
               style={{
