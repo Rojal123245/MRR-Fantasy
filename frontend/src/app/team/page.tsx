@@ -31,6 +31,11 @@ import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
 const positions = ["ALL", "GK", "DEF", "MID", "FWD"] as const;
 type AddMode = "starter" | "bench";
+type SwapSnapshot = {
+  selected: FormationPlayer[];
+  bench: Player[];
+  captainId: string | null;
+};
 
 /** Determine which positions a player can play. */
 function getPlayablePositions(player: Player): Position[] {
@@ -69,6 +74,10 @@ export default function TeamBuilderPage() {
   const [transferOutPlayer, setTransferOutPlayer] = useState<Player | null>(null);
   const [transferOutIsBench, setTransferOutIsBench] = useState(false);
   const [transferPending, setTransferPending] = useState(false);
+  // Mobile-friendly quick swap state
+  const [quickSwapMode, setQuickSwapMode] = useState(false);
+  const [selectedBenchForSwap, setSelectedBenchForSwap] = useState<string | null>(null);
+  const [lastSwap, setLastSwap] = useState<SwapSnapshot | null>(null);
 
   const loadData = useCallback(async () => {
     const token = getToken();
@@ -158,6 +167,11 @@ export default function TeamBuilderPage() {
   const handleSelect = (player: Player) => {
     if (lockStatus?.locked) {
       setError("Lineup changes are locked until Sunday 12:00 PM ET");
+      return;
+    }
+
+    if (quickSwapMode) {
+      setError("Quick Swap is active. Turn it off to add or remove players from the squad list.");
       return;
     }
 
@@ -443,11 +457,96 @@ export default function TeamBuilderPage() {
   };
 
   const isSquadComplete = selected.length === 6 && bench.length === 3 && missingPositions.length === 0 && !!captainId;
+  const canQuickSwap = !transferMode && !lockStatus?.locked && selected.length === 6 && bench.length === 3;
+
+  useEffect(() => {
+    if (!canQuickSwap) {
+      setQuickSwapMode(false);
+      setSelectedBenchForSwap(null);
+      setLastSwap(null);
+    }
+  }, [canQuickSwap]);
+
+  const getBestAssignedPositionForSwap = (benchPlayer: Player, starterOut: FormationPlayer): Position | null => {
+    const nextBench = bench.map((p) => (p.id === benchPlayer.id ? starterOut.player : p));
+    const nextBenchGks = nextBench.filter((p) => p.position === "GK").length;
+    if (nextBenchGks !== 1) return null;
+
+    const playable = getPlayablePositions(benchPlayer);
+    const preferred = starterOut.assignedPosition;
+    const orderedPlayable: Position[] = playable.includes(preferred)
+      ? [preferred, ...playable.filter((pos) => pos !== preferred)]
+      : playable;
+
+    for (const assignedPos of orderedPlayable) {
+      const nextSelected = selected.map((fp) =>
+        fp.player.id === starterOut.player.id
+          ? { player: benchPlayer, assignedPosition: assignedPos }
+          : fp
+      );
+      const nextGkCount = nextSelected.filter((fp) => fp.assignedPosition === "GK").length;
+      if (nextGkCount !== 1) continue;
+      if (getMissingPositions(nextSelected).length > 0) continue;
+      return assignedPos;
+    }
+
+    return null;
+  };
+
+  const isValidStarterSwapTarget = (starterOut: FormationPlayer): boolean => {
+    if (!selectedBenchForSwap) return false;
+    const benchPlayer = bench.find((p) => p.id === selectedBenchForSwap);
+    if (!benchPlayer) return false;
+    return getBestAssignedPositionForSwap(benchPlayer, starterOut) !== null;
+  };
+
+  const handleBenchSwapPick = (player: Player) => {
+    if (!quickSwapMode || !canQuickSwap) return;
+    setSelectedBenchForSwap((prev) => (prev === player.id ? null : player.id));
+    setError("");
+  };
+
+  const handleQuickSwap = (starterOut: FormationPlayer) => {
+    if (!quickSwapMode || !canQuickSwap || !selectedBenchForSwap) return;
+    const benchPlayer = bench.find((p) => p.id === selectedBenchForSwap);
+    if (!benchPlayer) return;
+
+    const assignedPos = getBestAssignedPositionForSwap(benchPlayer, starterOut);
+    if (!assignedPos) {
+      setError("Swap not allowed: lineup must keep valid role requirements.");
+      return;
+    }
+
+    setLastSwap({ selected: [...selected], bench: [...bench], captainId });
+    setSelected((prev) =>
+      prev.map((fp) =>
+        fp.player.id === starterOut.player.id
+          ? { player: benchPlayer, assignedPosition: assignedPos }
+          : fp
+      )
+    );
+    setBench((prev) => prev.map((p) => (p.id === benchPlayer.id ? starterOut.player : p)));
+    if (captainId === starterOut.player.id) setCaptainId(null);
+    setSelectedBenchForSwap(null);
+    setSuccess(`Swapped ${benchPlayer.name} with ${starterOut.player.name}.`);
+    setTimeout(() => setSuccess(""), 2500);
+  };
+
+  const handleUndoSwap = () => {
+    if (!lastSwap) return;
+    setSelected(lastSwap.selected);
+    setBench(lastSwap.bench);
+    setCaptainId(lastSwap.captainId);
+    setLastSwap(null);
+    setSelectedBenchForSwap(null);
+    setSuccess("Last swap reverted.");
+    setTimeout(() => setSuccess(""), 2000);
+  };
 
   return (
     <div className="min-h-screen pitch-pattern">
       <Nav />
-      <div className="pt-24 pb-12 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="pt-24 pb-28 lg:pb-12 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -486,14 +585,33 @@ export default function TeamBuilderPage() {
             </div>
           </div>
 
-          <button
-            onClick={handleSave}
-            disabled={saving || !isSquadComplete || isOverBudget || lockStatus?.locked}
-            className="btn-primary flex items-center gap-2 text-sm disabled:opacity-50"
-          >
-            {lockStatus?.locked ? <Lock size={16} /> : <Save size={16} />}
-            {lockStatus?.locked ? "Locked" : saving ? "Saving..." : "Save Team"}
-          </button>
+          <div className="flex items-center gap-2">
+            {canQuickSwap && (
+              <button
+                onClick={() => {
+                  setQuickSwapMode((prev) => !prev);
+                  setSelectedBenchForSwap(null);
+                }}
+                className="px-3 py-2 rounded-lg text-xs font-bold cursor-pointer border-none transition-all"
+                style={{
+                  fontFamily: "var(--font-display)",
+                  background: quickSwapMode ? "rgba(99,102,241,0.25)" : "var(--bg-secondary)",
+                  color: quickSwapMode ? "#a5b4fc" : "var(--text-muted)",
+                  border: quickSwapMode ? "1px solid rgba(99,102,241,0.5)" : "1px solid var(--border-color)",
+                }}
+              >
+                QUICK SWAP {quickSwapMode ? "ON" : "OFF"}
+              </button>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={saving || !isSquadComplete || isOverBudget || lockStatus?.locked}
+              className="btn-primary hidden lg:flex items-center gap-2 text-sm disabled:opacity-50"
+            >
+              {lockStatus?.locked ? <Lock size={16} /> : <Save size={16} />}
+              {lockStatus?.locked ? "Locked" : saving ? "Saving..." : "Save Team"}
+            </button>
+          </div>
         </motion.div>
 
         {/* Notifications */}
@@ -538,6 +656,41 @@ export default function TeamBuilderPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {quickSwapMode && canQuickSwap && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3 p-4 rounded-lg mb-6"
+            style={{
+              background: "rgba(99, 102, 241, 0.08)",
+              border: "1px solid rgba(99, 102, 241, 0.3)",
+            }}
+          >
+            <ArrowLeftRight size={18} style={{ color: "#818cf8", flexShrink: 0 }} />
+            <div className="flex-1">
+              <p className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "#818cf8" }}>
+                QUICK SWAP MODE
+              </p>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Tap one bench player, then tap a valid starter to swap. Invalid targets stay dimmed.
+              </p>
+            </div>
+            {lastSwap && (
+              <button
+                onClick={handleUndoSwap}
+                className="px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none"
+                style={{
+                  fontFamily: "var(--font-display)",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                Undo
+              </button>
+            )}
+          </motion.div>
+        )}
 
         {/* Pre-Gameweek Free Mode Banner */}
         {!isGameweekActive && hasExistingSquad && !lockStatus?.locked && (
@@ -739,7 +892,7 @@ export default function TeamBuilderPage() {
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.2 }}
-            className="order-2 lg:order-1"
+            className="order-1 lg:order-1"
           >
             <div className="sticky top-24">
               {/* Starting XI */}
@@ -785,17 +938,33 @@ export default function TeamBuilderPage() {
                 {selected.map((fp, i) => {
                   const isCaptain = captainId === fp.player.id;
                   const canCaptain = canBeCaptain(fp.player);
+                  const benchPlayerForSwap = selectedBenchForSwap ? bench.find((p) => p.id === selectedBenchForSwap) : null;
+                  const isSwapTarget = quickSwapMode && !!selectedBenchForSwap && isValidStarterSwapTarget(fp);
+                  const isSwapBlocked = quickSwapMode && !!selectedBenchForSwap && !isSwapTarget;
                   return (
                     <motion.div
                       key={fp.player.id}
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: i * 0.05 }}
-                      className="flex items-center gap-2 p-2 rounded-lg text-sm"
+                      onClick={() => {
+                        if (quickSwapMode && selectedBenchForSwap) {
+                          handleQuickSwap(fp);
+                        }
+                      }}
+                      className="flex items-center gap-2 p-2 rounded-lg text-sm transition-all"
                       style={{
                         background: isCaptain ? "rgba(255,171,0,0.08)" : "var(--bg-secondary)",
                         border: isCaptain ? "1px solid rgba(255,171,0,0.4)" : "1px solid var(--border-color)",
+                        cursor: quickSwapMode && selectedBenchForSwap ? "pointer" : "default",
+                        opacity: isSwapBlocked ? 0.45 : 1,
+                        boxShadow: isSwapTarget ? "0 0 0 1px rgba(0,230,118,0.45), 0 0 12px rgba(0,230,118,0.25)" : "none",
                       }}
+                      title={
+                        isSwapTarget && benchPlayerForSwap
+                          ? `Tap to swap with ${benchPlayerForSwap.name}`
+                          : undefined
+                      }
                     >
                       {/* Captain toggle button */}
                       <button
@@ -857,6 +1026,17 @@ export default function TeamBuilderPage() {
                           <ArrowLeftRight size={10} />
                           {transferOutPlayer?.id === fp.player.id ? "OUT" : "SWAP"}
                         </button>
+                      ) : quickSwapMode ? (
+                        <span
+                          className="text-[10px] font-bold px-2 py-1 rounded"
+                          style={{
+                            fontFamily: "var(--font-display)",
+                            background: isSwapTarget ? "rgba(0,230,118,0.15)" : "rgba(255,255,255,0.05)",
+                            color: isSwapTarget ? "var(--accent-green)" : "var(--text-muted)",
+                          }}
+                        >
+                          {selectedBenchForSwap ? (isSwapTarget ? "SWAP" : "LOCKED") : "PICK BENCH"}
+                        </span>
                       ) : (
                         <button
                           onClick={() => handleRemoveStarter(fp.player)}
@@ -1096,7 +1276,7 @@ export default function TeamBuilderPage() {
                   — 1 GK + 2 outfield
                 </span>
               </h3>
-              <div className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-1 gap-2">
                 {bench.length === 0 && (
                   <div
                     className="p-3 rounded-lg text-center text-xs"
@@ -1115,8 +1295,14 @@ export default function TeamBuilderPage() {
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.05 }}
-                    className="flex items-center gap-2 p-2 rounded-lg text-sm"
-                    style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.2)" }}
+                    onClick={() => handleBenchSwapPick(player)}
+                    className="flex items-center gap-2 p-2 rounded-lg text-sm transition-all"
+                    style={{
+                      background: selectedBenchForSwap === player.id ? "rgba(99,102,241,0.22)" : "rgba(99,102,241,0.08)",
+                      border: selectedBenchForSwap === player.id ? "1px solid rgba(129,140,248,0.65)" : "1px solid rgba(99,102,241,0.2)",
+                      cursor: quickSwapMode && canQuickSwap ? "pointer" : "default",
+                      boxShadow: selectedBenchForSwap === player.id ? "0 0 12px rgba(129,140,248,0.3)" : "none",
+                    }}
                   >
                     <span
                       className={`badge-${player.position.toLowerCase()} text-[10px] font-bold px-1.5 py-0.5 rounded text-white`}
@@ -1152,6 +1338,17 @@ export default function TeamBuilderPage() {
                         <ArrowLeftRight size={10} />
                         {transferOutPlayer?.id === player.id ? "OUT" : "SWAP"}
                       </button>
+                    ) : quickSwapMode ? (
+                      <span
+                        className="text-[10px] font-bold px-2 py-1 rounded"
+                        style={{
+                          fontFamily: "var(--font-display)",
+                          background: selectedBenchForSwap === player.id ? "rgba(129,140,248,0.26)" : "rgba(255,255,255,0.05)",
+                          color: selectedBenchForSwap === player.id ? "#c7d2fe" : "var(--text-muted)",
+                        }}
+                      >
+                        {selectedBenchForSwap === player.id ? "SELECTED" : "TAP"}
+                      </span>
                     ) : (
                       <button
                         onClick={() => handleRemoveBench(player)}
@@ -1189,17 +1386,19 @@ export default function TeamBuilderPage() {
           </motion.div>
 
           {/* Player catalog */}
-          <div className="lg:col-span-2 order-1 lg:order-2">
+          <div className="lg:col-span-2 order-2 lg:order-2">
             {/* Add Mode Toggle */}
             <div className="flex gap-2 mb-4">
               <button
                 onClick={() => setAddMode("starter")}
+                disabled={quickSwapMode}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer border-none"
                 style={{
                   fontFamily: "var(--font-display)",
                   background: addMode === "starter" ? "var(--accent-green)" : "var(--bg-secondary)",
                   color: addMode === "starter" ? "var(--bg-primary)" : "var(--text-muted)",
                   border: addMode === "starter" ? "none" : "1px solid var(--border-color)",
+                  opacity: quickSwapMode ? 0.45 : 1,
                 }}
               >
                 <Users size={14} />
@@ -1207,12 +1406,14 @@ export default function TeamBuilderPage() {
               </button>
               <button
                 onClick={() => setAddMode("bench")}
+                disabled={quickSwapMode}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer border-none"
                 style={{
                   fontFamily: "var(--font-display)",
                   background: addMode === "bench" ? "rgba(99,102,241,0.8)" : "var(--bg-secondary)",
                   color: addMode === "bench" ? "white" : "var(--text-muted)",
                   border: addMode === "bench" ? "none" : "1px solid var(--border-color)",
+                  opacity: quickSwapMode ? 0.45 : 1,
                 }}
               >
                 <Armchair size={14} />
@@ -1275,10 +1476,14 @@ export default function TeamBuilderPage() {
                     selected={isPlayerInSquad(player)}
                     assignedPosition={getAssignedPosition(player.id)}
                     onSelect={handleSelect}
-                    onRemove={(p) => {
-                      if (selected.some((fp) => fp.player.id === p.id)) handleRemoveStarter(p);
-                      else handleRemoveBench(p);
-                    }}
+                    onRemove={
+                      quickSwapMode
+                        ? undefined
+                        : (p) => {
+                            if (selected.some((fp) => fp.player.id === p.id)) handleRemoveStarter(p);
+                            else handleRemoveBench(p);
+                          }
+                    }
                     delay={i * 0.03}
                   />
                 ))}
@@ -1290,6 +1495,53 @@ export default function TeamBuilderPage() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+
+        <div
+          className="fixed bottom-0 left-0 right-0 z-40 lg:hidden p-3"
+          style={{
+            background: "linear-gradient(180deg, rgba(10,10,18,0) 0%, rgba(10,10,18,0.96) 26%, rgba(10,10,18,1) 100%)",
+            backdropFilter: "blur(6px)",
+          }}
+        >
+          <div className="max-w-7xl mx-auto grid grid-cols-3 gap-2">
+            <button
+              onClick={() => setQuickSwapMode((prev) => (canQuickSwap ? !prev : prev))}
+              disabled={!canQuickSwap}
+              className="px-3 py-2 rounded-lg text-[11px] font-bold border-none cursor-pointer disabled:opacity-40"
+              style={{
+                fontFamily: "var(--font-display)",
+                background: quickSwapMode ? "rgba(99,102,241,0.28)" : "var(--bg-secondary)",
+                color: quickSwapMode ? "#c7d2fe" : "var(--text-muted)",
+              }}
+            >
+              {quickSwapMode ? "SWAP ON" : "SWAP"}
+            </button>
+            <button
+              onClick={handleUndoSwap}
+              disabled={!lastSwap}
+              className="px-3 py-2 rounded-lg text-[11px] font-bold border-none cursor-pointer disabled:opacity-40"
+              style={{
+                fontFamily: "var(--font-display)",
+                background: "rgba(255,255,255,0.06)",
+                color: "var(--text-primary)",
+              }}
+            >
+              UNDO
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || !isSquadComplete || isOverBudget || lockStatus?.locked}
+              className="px-3 py-2 rounded-lg text-[11px] font-bold border-none cursor-pointer disabled:opacity-40"
+              style={{
+                fontFamily: "var(--font-display)",
+                background: "var(--accent-green)",
+                color: "var(--bg-primary)",
+              }}
+            >
+              {saving ? "SAVING" : "SAVE"}
+            </button>
           </div>
         </div>
       </div>
