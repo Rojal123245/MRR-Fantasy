@@ -8,7 +8,7 @@ impl PointsEngine {
     /// Scoring per MRR Fantasy rules:
     /// - Goals: GK=10, DEF=6, MID=5, FWD=4
     /// - Assists: 5 pts each
-    /// - Clean Sheets: GK=10, DEF=6
+    /// - Clean Sheets: GK=2, DEF=2
     /// - Saves (GK only): 1 pt per 5 saves
     /// - Penalty Save: +8
     /// - Minutes: 35+ = 2, 1-34 = 1
@@ -41,8 +41,8 @@ impl PointsEngine {
 
         let cs_pts = clean_sheets
             * match position {
-                PlayerPosition::Gk => 10,
-                PlayerPosition::Def => 6,
+                PlayerPosition::Gk => 2,
+                PlayerPosition::Def => 2,
                 _ => 0,
             };
 
@@ -89,22 +89,22 @@ mod tests {
     #[test]
     fn test_defender_clean_sheet() {
         let pts = PointsEngine::calculate(&PlayerPosition::Def, 0, 0, 1, 0, 0, 0, 0, 0, 0, 60);
-        // 1 cs * 6 + 2 (minutes 60) = 8
-        assert_eq!(pts, 8);
+        // 1 cs * 2 + 2 (minutes 60) = 4
+        assert_eq!(pts, 4);
     }
 
     #[test]
     fn test_goalkeeper_saves() {
         let pts = PointsEngine::calculate(&PlayerPosition::Gk, 0, 0, 1, 10, 0, 0, 0, 0, 0, 60);
-        // 1 cs * 10 + 10/5=2 saves + 2 (minutes 60) = 14
-        assert_eq!(pts, 14);
+        // 1 cs * 2 + 10/5=2 saves + 2 (minutes 60) = 6
+        assert_eq!(pts, 6);
     }
 
     #[test]
     fn test_goalkeeper_heroic_goal() {
         let pts = PointsEngine::calculate(&PlayerPosition::Gk, 1, 0, 1, 5, 1, 0, 0, 0, 0, 60);
-        // 1 goal * 10 + 1 cs * 10 + 5/5=1 save + 1 pen_save * 8 + 2 (minutes) = 31
-        assert_eq!(pts, 31);
+        // 1 goal * 10 + 1 cs * 2 + 5/5=1 save + 1 pen_save * 8 + 2 (minutes) = 23
+        assert_eq!(pts, 23);
     }
 
     #[test]

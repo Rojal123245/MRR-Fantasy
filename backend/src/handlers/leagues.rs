@@ -228,7 +228,7 @@ pub async fn get_member_lineup(
     let lock = compute_lock_status(&state.pool).await?;
     if !lock.locked {
         return Err(AppError::BadRequest(
-            "Lineups are only visible after the gameweek starts (Saturday midnight to Sunday 12:00 PM ET)"
+            "Lineups are only visible after the gameweek starts (Saturday 10:00 PM ET to Sunday 12:00 PM ET)"
                 .to_string(),
         ));
     }
@@ -291,8 +291,8 @@ pub async fn get_member_lineup(
                       END
                       + pp.assists * 5
                       + CASE COALESCE(tp.assigned_position, p.position)::text
-                          WHEN 'GK'  THEN pp.clean_sheets * 10
-                          WHEN 'DEF' THEN pp.clean_sheets * 6
+                          WHEN 'GK'  THEN pp.clean_sheets * 2
+                          WHEN 'DEF' THEN pp.clean_sheets * 2
                           ELSE 0
                         END
                       + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN pp.saves / 5 ELSE 0 END
