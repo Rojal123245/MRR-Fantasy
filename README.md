@@ -16,7 +16,7 @@ A full-stack multiplayer fantasy football application where users build 6-player
 | Goal (Midfielder)    | +8     |
 | Goal (Defender/GK)   | +12    |
 | Assist               | +5     |
-| Clean Sheet (DEF/GK) | +6     |
+| Clean Sheet (DEF/GK) | +2     |
 | Save (GK)            | +2     |
 | Tackle Won           | +2     |
 
