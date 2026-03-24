@@ -2,6 +2,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -16,6 +17,137 @@ use crate::services::points_engine::PointsEngine;
 struct TeamLineupSnapshotSource {
     id: Uuid,
     captain_id: Option<Uuid>,
+}
+
+fn price_floor() -> Decimal {
+    Decimal::new(1, 1) // 0.1
+}
+
+fn top_price_deltas() -> [Decimal; 3] {
+    [
+        Decimal::new(3, 1),
+        Decimal::new(2, 1),
+        Decimal::new(1, 1),
+    ]
+}
+
+fn bottom_price_deltas() -> [Decimal; 3] {
+    [
+        Decimal::new(-3, 1),
+        Decimal::new(-2, 1),
+        Decimal::new(-1, 1),
+    ]
+}
+
+/// Top 3 / bottom 3 by this gameweek's `player_points.total_points`; reverses any prior
+/// adjustment for the same week when stats are resubmitted.
+async fn apply_gameweek_price_adjustments(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    match_week_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct PrevDelta {
+        player_id: Uuid,
+        delta: Decimal,
+    }
+
+    let prev: Vec<PrevDelta> = sqlx::query_as(
+        "SELECT player_id, delta FROM gameweek_price_adjustments WHERE match_week_id = $1",
+    )
+    .bind(match_week_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    for row in prev {
+        sqlx::query(
+            "UPDATE players SET price = GREATEST(price - $1, $2) WHERE id = $3",
+        )
+        .bind(row.delta)
+        .bind(price_floor())
+        .bind(row.player_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    sqlx::query("DELETE FROM gameweek_price_adjustments WHERE match_week_id = $1")
+        .bind(match_week_id)
+        .execute(&mut **tx)
+        .await?;
+
+    #[derive(sqlx::FromRow)]
+    struct PlayerGwRow {
+        id: Uuid,
+    }
+
+    let ordered: Vec<PlayerGwRow> = sqlx::query_as(
+        r#"SELECT p.id
+           FROM players p
+           LEFT JOIN player_points pp ON pp.player_id = p.id AND pp.match_week_id = $1
+           ORDER BY COALESCE(pp.total_points, 0) DESC, p.name ASC"#,
+    )
+    .bind(match_week_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let top_ids: Vec<Uuid> = ordered.iter().take(3).map(|r| r.id).collect();
+
+    let mut bottom_ids: Vec<Uuid> = Vec::new();
+    for r in ordered.iter().rev() {
+        if bottom_ids.len() >= 3 {
+            break;
+        }
+        if !top_ids.contains(&r.id) {
+            bottom_ids.push(r.id);
+        }
+    }
+
+    async fn apply_one(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        match_week_id: Uuid,
+        player_id: Uuid,
+        intended: Decimal,
+    ) -> Result<(), sqlx::Error> {
+        let current: Decimal =
+            sqlx::query_scalar("SELECT price FROM players WHERE id = $1")
+                .bind(player_id)
+                .fetch_one(&mut **tx)
+                .await?;
+        let new_price = (current + intended).max(price_floor());
+        let actual = new_price - current;
+        if actual.is_zero() {
+            return Ok(());
+        }
+        sqlx::query("UPDATE players SET price = $1 WHERE id = $2")
+            .bind(new_price)
+            .bind(player_id)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query(
+            r#"INSERT INTO gameweek_price_adjustments (match_week_id, player_id, delta)
+               VALUES ($1, $2, $3)"#,
+        )
+        .bind(match_week_id)
+        .bind(player_id)
+        .bind(actual)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    let top_d = top_price_deltas();
+    for (i, &pid) in top_ids.iter().enumerate() {
+        if i < top_d.len() {
+            apply_one(tx, match_week_id, pid, top_d[i]).await?;
+        }
+    }
+    let bot_d = bottom_price_deltas();
+    for (i, &pid) in bottom_ids.iter().enumerate() {
+        if i < bot_d.len() {
+            apply_one(tx, match_week_id, pid, bot_d[i]).await?;
+        }
+    }
+
+    Ok(())
 }
 
 async fn snapshot_lineups_for_week(
@@ -291,6 +423,8 @@ pub async fn submit_week_stats(
     )
     .execute(&mut *tx)
     .await?;
+
+    apply_gameweek_price_adjustments(&mut tx, week.id).await?;
 
     #[derive(sqlx::FromRow)]
     struct TeamScoreContext {
