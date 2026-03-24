@@ -296,7 +296,7 @@ export default function AdminPage() {
             </h3>
           </div>
           <p className="text-xs mb-4" style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}>
-            Use this only if you need to reopen transfers/lineups during the scheduled Saturday lock window.
+            Use this only if you need to reopen transfers/lineups during the scheduled lock window (Sat 10:00 PM – Sun 12:00 PM ET).
           </p>
           <div className="flex items-center justify-between p-3 rounded-xl" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-color)" }}>
             <div>

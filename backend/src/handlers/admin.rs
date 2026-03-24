@@ -325,8 +325,8 @@ pub async fn submit_week_stats(
                      END
                      + COALESCE(pp.assists, 0) * 5
                      + CASE COALESCE(tglp.assigned_position, p.position)::text
-                         WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 10
-                         WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 6
+                         WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
+                         WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
                          ELSE 0
                        END
                      + CASE WHEN COALESCE(tglp.assigned_position, p.position)::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
@@ -360,8 +360,8 @@ pub async fn submit_week_stats(
                      END
                      + COALESCE(pp.assists, 0) * 5
                      + CASE COALESCE(tp.assigned_position, p.position)::text
-                         WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 10
-                         WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 6
+                         WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
+                         WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
                          ELSE 0
                        END
                      + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
@@ -416,8 +416,8 @@ pub async fn submit_week_stats(
                          END
                          + COALESCE(pp.assists, 0) * 5
                          + CASE COALESCE(tglp.assigned_position, p.position)::text
-                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 10
-                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 6
+                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
+                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
                              ELSE 0
                            END
                          + CASE WHEN COALESCE(tglp.assigned_position, p.position)::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
@@ -455,8 +455,8 @@ pub async fn submit_week_stats(
                          END
                          + COALESCE(pp.assists, 0) * 5
                          + CASE COALESCE(tp.assigned_position, p.position)::text
-                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 10
-                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 6
+                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
+                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
                              ELSE 0
                            END
                          + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
@@ -505,8 +505,8 @@ pub async fn submit_week_stats(
                          END
                          + COALESCE(pp.assists, 0) * 5
                          + CASE p.position::text
-                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 10
-                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 6
+                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
+                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
                              ELSE 0
                            END
                          + CASE WHEN p.position::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
@@ -540,8 +540,8 @@ pub async fn submit_week_stats(
                          END
                          + COALESCE(pp.assists, 0) * 5
                          + CASE p.position::text
-                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 10
-                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 6
+                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
+                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
                              ELSE 0
                            END
                          + CASE WHEN p.position::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END

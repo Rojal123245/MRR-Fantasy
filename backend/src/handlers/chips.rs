@@ -92,7 +92,7 @@ pub async fn activate_chip(
     let lock = compute_lock_status(&state.pool).await?;
     if lock.locked {
         return Err(AppError::BadRequest(
-            "Chips cannot be activated during the lock period (Saturday midnight to Sunday 12:00 PM ET)".to_string(),
+            "Chips cannot be activated during the lock period (Saturday 10:00 PM ET to Sunday 12:00 PM ET)".to_string(),
         ));
     }
 

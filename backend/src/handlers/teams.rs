@@ -26,25 +26,24 @@ fn scheduled_lock_status() -> (bool, Option<String>) {
     let now_et = Utc::now().with_timezone(&New_York);
     let weekday = now_et.weekday();
 
-    let locked = matches!(weekday, chrono::Weekday::Sat)
+    // Locked from Saturday 10:00 PM ET through Sunday before 12:00 PM ET.
+    let locked = (matches!(weekday, chrono::Weekday::Sat) && now_et.hour() >= 22)
         || (matches!(weekday, chrono::Weekday::Sun) && now_et.hour() < 12);
 
     let unlock_at = if locked {
-        let days_until_sunday = if matches!(weekday, chrono::Weekday::Sat) {
-            1
+        let unlock_date = if matches!(weekday, chrono::Weekday::Sat) {
+            (now_et + chrono::Duration::days(1)).date_naive()
         } else {
-            0
+            now_et.date_naive()
         };
-        let unlock = (now_et + chrono::Duration::days(days_until_sunday))
-            .date_naive()
+        unlock_date
             .and_hms_opt(12, 0, 0)
             .map(|dt| {
                 dt.and_local_timezone(New_York)
                     .single()
                     .map(|t| t.to_rfc3339())
             })
-            .flatten();
-        unlock
+            .flatten()
     } else {
         None
     };
@@ -179,8 +178,8 @@ async fn build_team_response(
                       END
                       + pp.assists * 5
                       + CASE COALESCE(tp.assigned_position, p.position)::text
-                          WHEN 'GK'  THEN pp.clean_sheets * 10
-                          WHEN 'DEF' THEN pp.clean_sheets * 6
+                          WHEN 'GK'  THEN pp.clean_sheets * 2
+                          WHEN 'DEF' THEN pp.clean_sheets * 2
                           ELSE 0
                         END
                       + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN pp.saves / 5 ELSE 0 END
@@ -331,7 +330,7 @@ pub async fn set_team_players(
     let lock = compute_lock_status(&state.pool).await?;
     if lock.locked {
         return Err(AppError::BadRequest(
-            "Lineup changes are locked from Saturday midnight to Sunday 12:00 PM ET".to_string(),
+            "Lineup changes are locked from Saturday 10:00 PM ET to Sunday 12:00 PM ET".to_string(),
         ));
     }
 
@@ -645,8 +644,8 @@ pub async fn get_team_points(
                       END
                       + pp.assists * 5
                       + CASE COALESCE(tp.assigned_position, p.position)::text
-                          WHEN 'GK'  THEN pp.clean_sheets * 10
-                          WHEN 'DEF' THEN pp.clean_sheets * 6
+                          WHEN 'GK'  THEN pp.clean_sheets * 2
+                          WHEN 'DEF' THEN pp.clean_sheets * 2
                           ELSE 0
                         END
                       + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN pp.saves / 5 ELSE 0 END
@@ -803,7 +802,7 @@ pub async fn transfer_player(
     let lock = compute_lock_status(&state.pool).await?;
     if lock.locked {
         return Err(AppError::BadRequest(
-            "Transfers are locked from Saturday midnight to Sunday 12:00 PM ET".to_string(),
+            "Transfers are locked from Saturday 10:00 PM ET to Sunday 12:00 PM ET".to_string(),
         ));
     }
 

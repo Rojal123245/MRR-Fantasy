@@ -226,7 +226,7 @@ export default function LandingPage() {
                   { action: "Goal (Midfielder)", points: "+8" },
                   { action: "Goal (Defender/GK)", points: "+12" },
                   { action: "Assist", points: "+5" },
-                  { action: "Clean Sheet (DEF/GK)", points: "+6" },
+                  { action: "Clean Sheet (DEF/GK)", points: "+2" },
                   { action: "Save (GK)", points: "+2" },
                   { action: "Tackle Won", points: "+2" },
                 ].map((row, i) => (
