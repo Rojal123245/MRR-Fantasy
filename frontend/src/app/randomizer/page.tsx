@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
@@ -18,10 +18,8 @@ import Nav from "@/components/nav";
 import {
   getRandomizerWebSocketUrl,
   type RandomizerClientMessage,
-  type RandomizerParticipant,
   type RandomizerRoomStateMessage,
   type RandomizerServerMessage,
-  type User,
 } from "@/lib/api";
 import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
@@ -31,15 +29,15 @@ export default function RandomizerPage() {
   const router = useRouter();
   const socketRef = useRef<WebSocket | null>(null);
 
-  const [user, setUser] = useState<User | null>(null);
   const [roomState, setRoomState] = useState<RandomizerRoomStateMessage | null>(null);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>("connecting");
   const [teamCount, setTeamCount] = useState(2);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [connectionVersion, setConnectionVersion] = useState(0);
+  const user = getUser();
 
-  const sendMessage = useEffectEvent((message: RandomizerClientMessage) => {
+  const sendMessage = (message: RandomizerClientMessage) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setError("Realtime connection is not ready.");
@@ -47,9 +45,9 @@ export default function RandomizerPage() {
     }
 
     socket.send(JSON.stringify(message));
-  });
+  };
 
-  const handleServerMessage = useEffectEvent((rawMessage: string) => {
+  const handleServerMessage = (rawMessage: string) => {
     try {
       const message = JSON.parse(rawMessage) as RandomizerServerMessage;
       if (message.type === "room_state") {
@@ -65,7 +63,7 @@ export default function RandomizerPage() {
     } catch {
       setError("Received an invalid randomizer message from the server.");
     }
-  });
+  };
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -79,10 +77,6 @@ export default function RandomizerPage() {
       router.push("/login");
       return;
     }
-
-    setUser(currentUser);
-    setSocketStatus("connecting");
-    setLoading(true);
 
     let cancelled = false;
     const socket = new WebSocket(getRandomizerWebSocketUrl(token));
@@ -146,6 +140,8 @@ export default function RandomizerPage() {
     socketRef.current?.close();
     setRoomState(null);
     setError("");
+    setSocketStatus("connecting");
+    setLoading(true);
     setConnectionVersion((value) => value + 1);
   };
 
