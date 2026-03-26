@@ -59,6 +59,7 @@ async fn main() {
     let state = AppState {
         pool,
         jwt_secret: config.jwt_secret.clone(),
+        randomizer: services::randomizer::RandomizerHub::default(),
     };
 
     // CORS layer
@@ -83,6 +84,8 @@ async fn main() {
     let points_routes = Router::new()
         .route("/week/:week", get(handlers::points::get_week_points))
         .route("/player/:id", get(handlers::points::get_player_points));
+
+    let randomizer_routes = Router::new().route("/ws", get(handlers::randomizer::ws_handler));
 
     // Team routes (mixed: lock-status is public, rest protected)
     let team_public_routes = Router::new().route("/lock-status", get(handlers::teams::lock_status));
@@ -163,6 +166,7 @@ async fn main() {
         .nest("/api/auth", auth_routes)
         .nest("/api/players", player_routes)
         .nest("/api/points", points_routes)
+        .nest("/api/randomizer", randomizer_routes)
         .nest("/api/teams", team_routes)
         .nest("/api/leagues", league_routes)
         .nest("/api/admin", admin_routes)
