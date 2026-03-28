@@ -144,10 +144,11 @@ export default function TeamBuilderPage() {
   // Combined stats across starters + bench
   const allSquadPlayers = [...selected.map((fp) => fp.player), ...bench];
   const topPlayerCount = allSquadPlayers.filter((p) => p.is_top_player).length;
-  const BUDGET = 70;
+  const budgetLimit = parseFloat(team?.budget_limit ?? "70");
   const totalCost = allSquadPlayers.reduce((sum, p) => sum + parseFloat(p.price), 0);
-  const remainingBudget = BUDGET - totalCost;
-  const isOverBudget = totalCost > BUDGET;
+  const remainingBudget = budgetLimit - totalCost;
+  const isOverBudget = totalCost > budgetLimit;
+  const formatMoney = (value: number) => value.toFixed(2);
   const benchGkCount = bench.filter((p) => p.position === "GK" || p.secondary_position === "GK").length;
 
   const isPlayerInSquad = (player: Player) =>
@@ -205,9 +206,9 @@ export default function TeamBuilderPage() {
     }
 
     const newCost = totalCost + parseFloat(player.price);
-    if (newCost > BUDGET) {
+    if (newCost > budgetLimit) {
       setError(
-        `Adding ${player.name} ($${player.price}) would exceed the $${BUDGET} budget. Remaining: $${remainingBudget.toFixed(0)}`
+        `Adding ${player.name} ($${player.price}) would exceed your $${formatMoney(budgetLimit)} budget. Remaining: $${formatMoney(remainingBudget)}`
       );
       return;
     }
@@ -580,7 +581,11 @@ export default function TeamBuilderPage() {
                 }}
               >
                 <DollarSign size={14} style={{ color: isOverBudget ? "var(--danger)" : "var(--accent-green)" }} />
-                Budget: ${totalCost.toFixed(0)}/${BUDGET} (${remainingBudget.toFixed(0)} left)
+                Budget: ${formatMoney(totalCost)}/${formatMoney(budgetLimit)} (${
+                  remainingBudget >= 0
+                    ? `${formatMoney(remainingBudget)} left`
+                    : `${formatMoney(Math.abs(remainingBudget))} over`
+                })
               </p>
             </div>
           </div>
@@ -1037,7 +1042,7 @@ export default function TeamBuilderPage() {
                           }}
                         >
                           <ArrowLeftRight size={10} />
-                          {transferOutPlayer?.id === fp.player.id ? "OUT" : "SWAP"}
+                          {transferOutPlayer?.id === fp.player.id ? "OUT" : "TRANSFER"}
                         </button>
                       ) : (
                         <button
@@ -1349,7 +1354,7 @@ export default function TeamBuilderPage() {
                         }}
                       >
                         <ArrowLeftRight size={10} />
-                        {transferOutPlayer?.id === player.id ? "OUT" : "SWAP"}
+                        {transferOutPlayer?.id === player.id ? "OUT" : "TRANSFER"}
                       </button>
                     ) : (
                       <button
@@ -1380,7 +1385,7 @@ export default function TeamBuilderPage() {
                       fontFamily: "var(--font-display)",
                     }}
                   >
-                    ${totalCost.toFixed(0)} / ${BUDGET}
+                    ${formatMoney(totalCost)} / ${formatMoney(budgetLimit)}
                   </span>
                 </div>
               )}

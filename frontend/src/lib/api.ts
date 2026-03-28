@@ -111,6 +111,7 @@ export interface FantasyTeam {
   user_id: string;
   name: string;
   captain_id: string | null;
+  budget_limit: string;
   created_at: string;
   players: StarterPlayer[];
   bench: Player[];

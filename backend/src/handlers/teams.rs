@@ -107,7 +107,7 @@ pub async fn create_team(
     let team = sqlx::query_as::<_, FantasyTeam>(
         r#"INSERT INTO fantasy_teams (user_id, name)
            VALUES ($1, $2)
-           RETURNING id, user_id, name, captain_id, created_at"#,
+           RETURNING id, user_id, name, captain_id, budget_limit, created_at"#,
     )
     .bind(auth.user_id)
     .bind(&body.name)
@@ -226,6 +226,7 @@ async fn build_team_response(
         user_id: team.user_id,
         name: team.name.clone(),
         captain_id: team.captain_id,
+        budget_limit: team.budget_limit,
         created_at: team.created_at,
         players: starters,
         bench,
@@ -298,7 +299,7 @@ pub async fn get_my_team(
     Extension(auth): Extension<AuthUser>,
 ) -> AppResult<Json<FantasyTeamWithPlayers>> {
     let team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE user_id = $1",
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE user_id = $1",
     )
     .bind(auth.user_id)
     .fetch_optional(&state.pool)
@@ -402,8 +403,8 @@ pub async fn set_team_players(
     }
 
     // Verify team ownership
-    let _team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
+    let team = sqlx::query_as::<_, FantasyTeam>(
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
     )
     .bind(team_id)
     .bind(auth.user_id)
@@ -541,10 +542,10 @@ pub async fn set_team_players(
     .fetch_one(&state.pool)
     .await?;
 
-    let budget_limit = rust_decimal::Decimal::from(70);
-    if total_cost > budget_limit {
+    if total_cost > team.budget_limit {
         return Err(AppError::BadRequest(format!(
-            "Team cost ${total_cost} exceeds the $70 budget. Remove expensive players to fit the budget."
+            "Team cost ${total_cost} exceeds your ${} budget. Remove expensive players to fit the budget.",
+            team.budget_limit
         )));
     }
 
@@ -604,7 +605,7 @@ pub async fn set_team_players(
 
     // Return updated team (re-fetch to get updated captain_id)
     let updated_team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1",
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE id = $1",
     )
     .bind(team_id)
     .fetch_one(&state.pool)
@@ -622,7 +623,7 @@ pub async fn get_team_points(
     Path(team_id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     let team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1",
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE id = $1",
     )
     .bind(team_id)
     .fetch_optional(&state.pool)
@@ -705,7 +706,7 @@ pub async fn get_transfer_status(
     Path(team_id): Path<Uuid>,
 ) -> AppResult<Json<TransferStatusResponse>> {
     let _team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
     )
     .bind(team_id)
     .bind(auth.user_id)
@@ -807,7 +808,7 @@ pub async fn transfer_player(
     }
 
     let team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
     )
     .bind(team_id)
     .bind(auth.user_id)
@@ -954,10 +955,10 @@ pub async fn transfer_player(
     .fetch_one(&state.pool)
     .await?;
 
-    let budget_limit = rust_decimal::Decimal::from(70);
-    if total_cost > budget_limit {
+    if total_cost > team.budget_limit {
         return Err(AppError::BadRequest(format!(
-            "Transfer would push team cost to ${total_cost}, exceeding the $70 budget"
+            "Transfer would push team cost to ${total_cost}, exceeding your ${} budget",
+            team.budget_limit
         )));
     }
 
@@ -1035,7 +1036,7 @@ pub async fn transfer_player(
     tx.commit().await?;
 
     let updated_team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1",
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE id = $1",
     )
     .bind(team_id)
     .fetch_one(&state.pool)

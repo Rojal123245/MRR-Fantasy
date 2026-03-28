@@ -426,6 +426,22 @@ pub async fn submit_week_stats(
 
     apply_gameweek_price_adjustments(&mut tx, week.id).await?;
 
+    // Carry each user's team value forward as their next budget limit.
+    // This makes budget changes from price movements user-specific.
+    sqlx::query(
+        r#"UPDATE fantasy_teams ft
+           SET budget_limit = team_cost.total_cost
+           FROM (
+             SELECT tp.team_id, COALESCE(SUM(p.price), 0) AS total_cost
+             FROM team_players tp
+             JOIN players p ON p.id = tp.player_id
+             GROUP BY tp.team_id
+           ) AS team_cost
+           WHERE ft.id = team_cost.team_id"#,
+    )
+    .execute(&mut *tx)
+    .await?;
+
     #[derive(sqlx::FromRow)]
     struct TeamScoreContext {
         id: Uuid,
