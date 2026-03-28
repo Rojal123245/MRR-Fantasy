@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -12,6 +13,7 @@ pub struct FantasyTeam {
     pub user_id: Uuid,
     pub name: String,
     pub captain_id: Option<Uuid>,
+    pub budget_limit: Decimal,
     pub created_at: DateTime<Utc>,
 }
 
@@ -30,6 +32,7 @@ pub struct FantasyTeamWithPlayers {
     pub user_id: Uuid,
     pub name: String,
     pub captain_id: Option<Uuid>,
+    pub budget_limit: Decimal,
     pub created_at: DateTime<Utc>,
     pub players: Vec<StarterPlayer>,
     pub bench: Vec<Player>,

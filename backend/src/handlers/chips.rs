@@ -67,7 +67,7 @@ pub async fn get_chip_status(
     Path(team_id): Path<Uuid>,
 ) -> AppResult<Json<ChipStatusResponse>> {
     let _team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
     )
     .bind(team_id)
     .bind(auth.user_id)
@@ -103,7 +103,7 @@ pub async fn activate_chip(
     }
 
     let _team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
     )
     .bind(team_id)
     .bind(auth.user_id)
@@ -169,7 +169,7 @@ pub async fn deactivate_chip(
     }
 
     let _team = sqlx::query_as::<_, FantasyTeam>(
-        "SELECT id, user_id, name, captain_id, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
+        "SELECT id, user_id, name, captain_id, budget_limit, created_at FROM fantasy_teams WHERE id = $1 AND user_id = $2",
     )
     .bind(team_id)
     .bind(auth.user_id)
