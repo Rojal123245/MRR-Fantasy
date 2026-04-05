@@ -25,6 +25,7 @@ pub async fn get_week_points(
              pp.clean_sheets,
              pp.saves,
              pp.tackles,
+             pp.minutes_played,
              pp.total_points,
              mw.week_number
            FROM player_points pp
@@ -57,6 +58,7 @@ pub async fn get_player_points(
              pp.clean_sheets,
              pp.saves,
              pp.tackles,
+             pp.minutes_played,
              pp.total_points,
              mw.week_number
            FROM player_points pp
