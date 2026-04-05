@@ -317,6 +317,7 @@ export interface LockStatus {
   locked: boolean;
   unlock_at: string | null;
   manually_unlocked: boolean;
+  active_gameweek: number | null;
 }
 
 export function getLockStatus() {

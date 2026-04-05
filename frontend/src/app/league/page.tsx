@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Plus, ArrowRight, Copy, Check, AlertCircle, Trophy, Crown, Shield, Eye, X, Lock, Calendar, ChevronLeft, ChevronRight, Star, Target, Timer, ShieldCheck, ChevronDown } from "lucide-react";
+import { Users, Plus, ArrowRight, Copy, Check, AlertCircle, Trophy, Crown, Shield, Eye, X, Lock, Calendar, ChevronLeft, ChevronRight, Star, Target, ChevronDown } from "lucide-react";
 import Nav from "@/components/nav";
 import Formation from "@/components/formation";
 import type { FormationPlayer } from "@/components/formation";
@@ -33,7 +33,7 @@ export default function LeaguePage() {
   const [gameweekLoading, setGameweekLoading] = useState(false);
   const [weekPlayers, setWeekPlayers] = useState<PlayerPointsDisplay[]>([]);
   const [weekPlayersLoading, setWeekPlayersLoading] = useState(false);
-  const [showPlayerStats, setShowPlayerStats] = useState(true);
+  const [showPlayerStats, setShowPlayerStats] = useState(false);
 
   const loadMyLeagues = async () => {
     const token = getToken();
@@ -55,7 +55,14 @@ export default function LeaguePage() {
       return;
     }
     loadMyLeagues();
-    getLockStatus().then((s) => setIsLocked(s.locked)).catch(() => {});
+    getLockStatus()
+      .then((s) => {
+        setIsLocked(s.locked);
+        if (s.active_gameweek) {
+          setSelectedWeek(s.active_gameweek);
+        }
+      })
+      .catch(() => {});
   }, [router]);
 
   const loadGameweekPoints = async (leagueId: string, week: number) => {
@@ -610,35 +617,31 @@ export default function LeaguePage() {
             )}
 
             {/* Player Performances */}
-            {viewSubTab === "gameweek" && !gameweekLoading && (
+            {viewSubTab === "gameweek" && !gameweekLoading && weekPlayers.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 }}
-                className="glass-card p-6 mt-4"
+                className="glass-card mt-4 overflow-hidden"
               >
                 <button
                   onClick={() => setShowPlayerStats(!showPlayerStats)}
-                  className="w-full flex items-center justify-between mb-4 bg-transparent border-none cursor-pointer p-0"
+                  className="w-full flex items-center justify-between p-4 bg-transparent border-none cursor-pointer"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(0, 230, 118, 0.1)" }}>
-                      <Target size={20} style={{ color: "var(--accent-green)" }} />
-                    </div>
-                    <div className="text-left">
-                      <h3 className="text-sm uppercase tracking-wider font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
-                        Player Performances
-                      </h3>
-                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                        {weekPlayers.length} player{weekPlayers.length !== 1 ? "s" : ""} scored points
-                      </p>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <Target size={16} style={{ color: "var(--accent-green)" }} />
+                    <span className="text-xs uppercase tracking-wider font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                      Player Performances
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: "rgba(0, 230, 118, 0.1)", color: "var(--accent-green)" }}>
+                      {weekPlayers.length}
+                    </span>
                   </div>
                   <motion.div
                     animate={{ rotate: showPlayerStats ? 180 : 0 }}
                     transition={{ duration: 0.2 }}
                   >
-                    <ChevronDown size={18} style={{ color: "var(--text-muted)" }} />
+                    <ChevronDown size={16} style={{ color: "var(--text-muted)" }} />
                   </motion.div>
                 </button>
 
@@ -648,101 +651,81 @@ export default function LeaguePage() {
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: "auto", opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3 }}
+                      transition={{ duration: 0.25 }}
                       style={{ overflow: "hidden" }}
                     >
-                      {weekPlayersLoading ? (
-                        <div className="flex items-center justify-center py-8">
-                          <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "var(--accent-green)", borderTopColor: "transparent" }} />
-                        </div>
-                      ) : weekPlayers.length > 0 ? (
-                        <div className="space-y-2">
-                          {weekPlayers.map((player, i) => {
-                            const isTopPoints = i === 0;
-                            return (
-                              <motion.div
-                                key={player.player_id}
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: i * 0.03 }}
-                                className="rounded-xl p-3"
-                                style={{
-                                  background: "var(--bg-elevated)",
-                                  border: isTopPoints ? "1px solid rgba(255, 171, 0, 0.3)" : "1px solid var(--border-color)",
-                                }}
-                              >
-                                <div className="flex items-center gap-3 mb-2">
-                                  <span
-                                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full text-white ${
-                                      player.position === "GK" ? "badge-gk" :
-                                      player.position === "DEF" ? "badge-def" :
-                                      player.position === "MID" ? "badge-mid" : "badge-fwd"
-                                    }`}
-                                  >
-                                    {player.position}
-                                  </span>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium truncate">
-                                      {player.player_name}
-                                      {isTopPoints && (
-                                        <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(255,171,0,0.2)", color: "#ffab00" }}>
-                                          MVP
-                                        </span>
-                                      )}
-                                    </p>
-                                  </div>
-                                  <span className="text-lg font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>
-                                    {player.total_points} pts
-                                  </span>
-                                </div>
+                      {/* Table header */}
+                      <div
+                        className="grid items-center px-4 py-2 text-[10px] uppercase tracking-wider font-bold"
+                        style={{
+                          gridTemplateColumns: "1fr repeat(5, 40px)",
+                          fontFamily: "var(--font-display)",
+                          color: "var(--text-muted)",
+                          background: "var(--bg-secondary)",
+                          borderTop: "1px solid var(--border-color)",
+                          borderBottom: "1px solid var(--border-color)",
+                        }}
+                      >
+                        <span>Player</span>
+                        <span className="text-center">G</span>
+                        <span className="text-center">A</span>
+                        <span className="text-center">CS</span>
+                        <span className="text-center">MIN</span>
+                        <span className="text-center">PTS</span>
+                      </div>
 
-                                {/* Stats row */}
-                                <div className="flex flex-wrap gap-2 ml-8">
-                                  {player.goals > 0 && (
-                                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ background: "rgba(0, 230, 118, 0.08)", color: "var(--accent-green)" }}>
-                                      <Target size={12} />
-                                      <span className="font-bold">{player.goals}</span>
-                                      <span style={{ color: "var(--text-muted)" }}>Goal{player.goals !== 1 ? "s" : ""}</span>
-                                    </div>
-                                  )}
-                                  {player.assists > 0 && (
-                                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ background: "rgba(255, 171, 0, 0.08)", color: "var(--accent-amber)" }}>
-                                      <Star size={12} />
-                                      <span className="font-bold">{player.assists}</span>
-                                      <span style={{ color: "var(--text-muted)" }}>Assist{player.assists !== 1 ? "s" : ""}</span>
-                                    </div>
-                                  )}
-                                  {player.clean_sheets > 0 && (
-                                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ background: "rgba(33, 150, 243, 0.08)", color: "#42a5f5" }}>
-                                      <ShieldCheck size={12} />
-                                      <span className="font-bold">{player.clean_sheets}</span>
-                                      <span style={{ color: "var(--text-muted)" }}>CS</span>
-                                    </div>
-                                  )}
-                                  {player.minutes_played > 0 && (
-                                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ background: "rgba(156, 39, 176, 0.08)", color: "#ab47bc" }}>
-                                      <Timer size={12} />
-                                      <span className="font-bold">{player.minutes_played}</span>
-                                      <span style={{ color: "var(--text-muted)" }}>min</span>
-                                    </div>
-                                  )}
-                                  {player.saves > 0 && (
-                                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ background: "rgba(255, 152, 0, 0.08)", color: "#ffa726" }}>
-                                      <Shield size={12} />
-                                      <span className="font-bold">{player.saves}</span>
-                                      <span style={{ color: "var(--text-muted)" }}>Save{player.saves !== 1 ? "s" : ""}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </motion.div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="text-center py-6">
-                          <p className="text-sm" style={{ color: "var(--text-muted)" }}>No player stats for this gameweek</p>
-                        </div>
-                      )}
+                      {/* Player rows */}
+                      <div className="max-h-[320px] overflow-y-auto">
+                        {weekPlayers.map((player, i) => {
+                          const isTopPoints = i === 0;
+                          return (
+                            <div
+                              key={player.player_id}
+                              className="grid items-center px-4 py-2.5"
+                              style={{
+                                gridTemplateColumns: "1fr repeat(5, 40px)",
+                                background: isTopPoints ? "rgba(255, 171, 0, 0.04)" : "transparent",
+                                borderBottom: "1px solid var(--border-color)",
+                              }}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0 ${
+                                    player.position === "GK" ? "badge-gk" :
+                                    player.position === "DEF" ? "badge-def" :
+                                    player.position === "MID" ? "badge-mid" : "badge-fwd"
+                                  }`}
+                                >
+                                  {player.position}
+                                </span>
+                                <span className="text-xs font-medium truncate">
+                                  {player.player_name}
+                                </span>
+                                {isTopPoints && (
+                                  <span className="text-[9px] font-bold px-1 py-0.5 rounded shrink-0" style={{ background: "rgba(255,171,0,0.2)", color: "#ffab00" }}>
+                                    MVP
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-xs text-center font-bold" style={{ color: player.goals > 0 ? "var(--accent-green)" : "var(--text-muted)" }}>
+                                {player.goals || "-"}
+                              </span>
+                              <span className="text-xs text-center font-bold" style={{ color: player.assists > 0 ? "var(--accent-amber)" : "var(--text-muted)" }}>
+                                {player.assists || "-"}
+                              </span>
+                              <span className="text-xs text-center font-bold" style={{ color: player.clean_sheets > 0 ? "#42a5f5" : "var(--text-muted)" }}>
+                                {player.clean_sheets || "-"}
+                              </span>
+                              <span className="text-xs text-center" style={{ color: "var(--text-muted)" }}>
+                                {player.minutes_played || "-"}
+                              </span>
+                              <span className="text-xs text-center font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>
+                                {player.total_points}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
