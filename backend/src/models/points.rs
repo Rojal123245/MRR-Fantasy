@@ -44,6 +44,7 @@ pub struct PlayerPointsDisplay {
     pub clean_sheets: i32,
     pub saves: i32,
     pub tackles: i32,
+    pub minutes_played: i32,
     pub total_points: i32,
     pub week_number: i32,
 }

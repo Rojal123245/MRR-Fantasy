@@ -374,6 +374,7 @@ export interface PlayerPointsDisplay {
   clean_sheets: number;
   saves: number;
   tackles: number;
+  minutes_played: number;
   total_points: number;
   week_number: number;
 }
