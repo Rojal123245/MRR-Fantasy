@@ -114,7 +114,11 @@ async fn main() {
     // League routes (mixed: some public, some protected)
     let league_public_routes = Router::new()
         .route("/:id", get(handlers::leagues::get_league))
-        .route("/:id/leaderboard", get(handlers::leagues::get_leaderboard));
+        .route("/:id/leaderboard", get(handlers::leagues::get_leaderboard))
+        .route(
+            "/:id/gameweek/:week",
+            get(handlers::leagues::get_league_gameweek),
+        );
 
     let league_protected_routes = Router::new()
         .route("/", post(handlers::leagues::create_league))

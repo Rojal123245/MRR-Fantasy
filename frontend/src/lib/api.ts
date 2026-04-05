@@ -214,6 +214,25 @@ export function getMyLeagues(token: string) {
   return apiFetch<MyLeague[]>("/api/leagues/my", { token });
 }
 
+export interface LeagueGameweekMember {
+  user_id: string;
+  username: string;
+  full_name: string;
+  team_name: string | null;
+  week_number: number;
+  gameweek_points: number;
+}
+
+export interface LeagueGameweekDetail {
+  league_id: string;
+  week_number: number;
+  members: LeagueGameweekMember[];
+}
+
+export function getLeagueGameweek(leagueId: string, week: number) {
+  return apiFetch<LeagueGameweekDetail>(`/api/leagues/${leagueId}/gameweek/${week}`);
+}
+
 // Chips
 export interface ChipInfo {
   available: boolean;
