@@ -33,6 +33,7 @@ export default function LeaguePage() {
   const [gameweekLoading, setGameweekLoading] = useState(false);
   const [weekPlayers, setWeekPlayers] = useState<PlayerPointsDisplay[]>([]);
   const [weekPlayersLoading, setWeekPlayersLoading] = useState(false);
+  const [showMemberPoints, setShowMemberPoints] = useState(true);
   const [showPlayerStats, setShowPlayerStats] = useState(false);
 
   const loadMyLeagues = async () => {
@@ -530,9 +531,9 @@ export default function LeaguePage() {
 
             {/* Gameweek Points sub-tab */}
             {viewSubTab === "gameweek" && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-6">
-                {/* Week selector */}
-                <div className="flex items-center justify-between mb-6">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card overflow-hidden">
+                {/* Week selector - always visible */}
+                <div className="flex items-center justify-between p-4">
                   <button
                     onClick={() => {
                       const prev = Math.max(1, selectedWeek - 1);
@@ -562,57 +563,94 @@ export default function LeaguePage() {
                   </button>
                 </div>
 
+                {/* Collapsible member points header */}
+                {!gameweekLoading && gameweekData && gameweekData.members.length > 0 && (
+                  <button
+                    onClick={() => setShowMemberPoints(!showMemberPoints)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-transparent border-none cursor-pointer"
+                    style={{ borderTop: "1px solid var(--border-color)" }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Trophy size={16} style={{ color: "var(--accent-amber)" }} />
+                      <span className="text-xs uppercase tracking-wider font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
+                        Manager Points
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: "rgba(255, 171, 0, 0.1)", color: "var(--accent-amber)" }}>
+                        {gameweekData.members.length}
+                      </span>
+                    </div>
+                    <motion.div
+                      animate={{ rotate: showMemberPoints ? 180 : 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <ChevronDown size={16} style={{ color: "var(--text-muted)" }} />
+                    </motion.div>
+                  </button>
+                )}
+
                 {gameweekLoading ? (
                   <div className="flex items-center justify-center py-12">
                     <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "var(--accent-green)", borderTopColor: "transparent" }} />
                   </div>
                 ) : gameweekData && gameweekData.members.length > 0 ? (
-                  <div className="space-y-2">
-                    {gameweekData.members.map((member, i) => {
-                      const isTopScorer = i === 0 && member.gameweek_points > 0;
-                      return (
-                        <motion.div
-                          key={member.user_id}
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.05 }}
-                          className="flex items-center gap-3 p-3 rounded-xl"
-                          style={{
-                            background: "var(--bg-elevated)",
-                            border: isTopScorer ? "1px solid rgba(255, 171, 0, 0.3)" : "1px solid var(--border-color)",
-                          }}
-                        >
-                          <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold" style={{
-                            fontFamily: "var(--font-display)",
-                            background: isTopScorer ? "rgba(255, 171, 0, 0.15)" : "var(--bg-secondary)",
-                            color: isTopScorer ? "var(--accent-amber)" : "var(--text-muted)",
-                          }}>
-                            {isTopScorer ? <Star size={16} /> : i + 1}
-                          </div>
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">
-                              {member.username}
-                              {isTopScorer && (
-                                <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(255,171,0,0.2)", color: "#ffab00" }}>
-                                  TOP SCORER
+                  <AnimatePresence>
+                    {showMemberPoints && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25 }}
+                        style={{ overflow: "hidden" }}
+                      >
+                        <div className="space-y-2 px-4 pb-4">
+                          {gameweekData.members.map((member, i) => {
+                            const isTopScorer = i === 0 && member.gameweek_points > 0;
+                            return (
+                              <motion.div
+                                key={member.user_id}
+                                initial={{ opacity: 0, x: -10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: i * 0.05 }}
+                                className="flex items-center gap-3 p-3 rounded-xl"
+                                style={{
+                                  background: "var(--bg-elevated)",
+                                  border: isTopScorer ? "1px solid rgba(255, 171, 0, 0.3)" : "1px solid var(--border-color)",
+                                }}
+                              >
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold" style={{
+                                  fontFamily: "var(--font-display)",
+                                  background: isTopScorer ? "rgba(255, 171, 0, 0.15)" : "var(--bg-secondary)",
+                                  color: isTopScorer ? "var(--accent-amber)" : "var(--text-muted)",
+                                }}>
+                                  {isTopScorer ? <Star size={16} /> : i + 1}
+                                </div>
+                                <div className="flex-1">
+                                  <p className="text-sm font-medium">
+                                    {member.username}
+                                    {isTopScorer && (
+                                      <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(255,171,0,0.2)", color: "#ffab00" }}>
+                                        TOP SCORER
+                                      </span>
+                                    )}
+                                  </p>
+                                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>{member.full_name || member.username}</p>
+                                </div>
+                                <span className="text-lg font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>
+                                  {member.gameweek_points}
                                 </span>
-                              )}
-                            </p>
-                            <p className="text-xs" style={{ color: "var(--text-muted)" }}>{member.full_name || member.username}</p>
-                          </div>
-                          <span className="text-lg font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-green)" }}>
-                            {member.gameweek_points}
-                          </span>
-                        </motion.div>
-                      );
-                    })}
-                  </div>
-                ) : (
+                              </motion.div>
+                            );
+                          })}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                ) : !gameweekLoading ? (
                   <div className="text-center py-8">
                     <Calendar size={32} className="mx-auto mb-3" style={{ color: "var(--text-muted)", opacity: 0.5 }} />
                     <p className="text-sm" style={{ color: "var(--text-muted)" }}>No points recorded for Gameweek {selectedWeek}</p>
                   </div>
-                )}
+                ) : null}
               </motion.div>
             )}
 
