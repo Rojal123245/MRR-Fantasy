@@ -10,8 +10,9 @@ use crate::auth::middleware::AuthUser;
 use crate::error::{AppError, AppResult};
 use crate::handlers::teams::compute_lock_status;
 use crate::models::{
-    CreateLeagueRequest, JoinLeagueRequest, League, LeagueDetail, LeagueMemberStanding,
-    MemberLineupResponse, MyLeague, Player, PlayerPosition, StarterPlayer,
+    CreateLeagueRequest, JoinLeagueRequest, League, LeagueDetail, LeagueGameweekDetail,
+    LeagueGameweekStanding, LeagueMemberStanding, MemberLineupResponse, MyLeague, Player,
+    PlayerPosition, StarterPlayer,
 };
 
 /// Generate a random 8-character alphanumeric invite code.
@@ -198,6 +199,50 @@ pub async fn get_leaderboard(
     .await?;
 
     Ok(Json(standings))
+}
+
+/// GET /api/leagues/:id/gameweek/:week
+///
+/// Get league member standings for a specific gameweek.
+pub async fn get_league_gameweek(
+    State(state): State<AppState>,
+    Path((league_id, week)): Path<(Uuid, i32)>,
+) -> AppResult<Json<LeagueGameweekDetail>> {
+    let _league = sqlx::query_scalar::<_, Uuid>("SELECT id FROM leagues WHERE id = $1")
+        .bind(league_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("League not found".to_string()))?;
+
+    let members = sqlx::query_as::<_, LeagueGameweekStanding>(
+        r#"SELECT
+             u.id AS user_id,
+             u.username,
+             u.full_name,
+             ft.name AS team_name,
+             $2 AS week_number,
+             COALESCE((
+               SELECT tgp.total_points::bigint
+               FROM team_gameweek_points tgp
+               INNER JOIN match_weeks mw ON mw.id = tgp.match_week_id
+               WHERE tgp.team_id = ft.id AND mw.week_number = $2
+             ), 0) AS gameweek_points
+           FROM league_members lm
+           INNER JOIN users u ON u.id = lm.user_id
+           LEFT JOIN fantasy_teams ft ON ft.user_id = u.id
+           WHERE lm.league_id = $1
+           ORDER BY gameweek_points DESC"#,
+    )
+    .bind(league_id)
+    .bind(week)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(LeagueGameweekDetail {
+        league_id,
+        week_number: week,
+        members,
+    }))
 }
 
 #[derive(Debug, sqlx::FromRow)]

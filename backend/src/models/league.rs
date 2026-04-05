@@ -62,3 +62,22 @@ pub struct CreateLeagueRequest {
 pub struct JoinLeagueRequest {
     pub invite_code: String,
 }
+
+/// A league member's points for a single gameweek.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct LeagueGameweekStanding {
+    pub user_id: Uuid,
+    pub username: String,
+    pub full_name: String,
+    pub team_name: Option<String>,
+    pub week_number: i32,
+    pub gameweek_points: Option<i64>,
+}
+
+/// Response for per-gameweek league standings.
+#[derive(Debug, Serialize)]
+pub struct LeagueGameweekDetail {
+    pub league_id: Uuid,
+    pub week_number: i32,
+    pub members: Vec<LeagueGameweekStanding>,
+}
