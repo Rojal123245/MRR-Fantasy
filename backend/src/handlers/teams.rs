@@ -20,6 +20,7 @@ pub struct LockStatusResponse {
     pub locked: bool,
     pub unlock_at: Option<String>,
     pub manually_unlocked: bool,
+    pub active_gameweek: Option<i32>,
 }
 
 fn scheduled_lock_status() -> (bool, Option<String>) {
@@ -59,6 +60,12 @@ pub async fn compute_lock_status(pool: &sqlx::PgPool) -> AppResult<LockStatusRes
     .await?
     .unwrap_or(false);
 
+    let active_gameweek = sqlx::query_scalar::<_, i32>(
+        "SELECT week_number FROM match_weeks WHERE is_active = true LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+
     let (scheduled_locked, scheduled_unlock_at) = scheduled_lock_status();
     let locked = scheduled_locked && !manually_unlocked;
     let unlock_at = if locked { scheduled_unlock_at } else { None };
@@ -67,6 +74,7 @@ pub async fn compute_lock_status(pool: &sqlx::PgPool) -> AppResult<LockStatusRes
         locked,
         unlock_at,
         manually_unlocked,
+        active_gameweek,
     })
 }
 
