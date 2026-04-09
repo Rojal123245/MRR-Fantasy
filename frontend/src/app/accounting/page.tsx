@@ -11,7 +11,6 @@ import {
   Circle,
   ChevronDown,
   ChevronUp,
-  Users,
   AlertCircle,
   X,
   BarChart3,
@@ -53,9 +52,11 @@ export default function AccountingPage() {
   const [newAmount, setNewAmount] = useState("");
   const [showCreateForm, setShowCreateForm] = useState(false);
 
-  // Add player form
-  const [playerName, setPlayerName] = useState("");
-  const [selectedUserId, setSelectedUserId] = useState<string>("");
+  // Add player selection (randomizer-style)
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [otherPlayers, setOtherPlayers] = useState<Array<{ id: string; name: string }>>([]);
+  const [otherName, setOtherName] = useState("");
+  const [addingPlayers, setAddingPlayers] = useState(false);
 
   const token = getToken();
   const user = getUser();
@@ -162,27 +163,88 @@ export default function AccountingPage() {
     }
   };
 
-  const handleAddPlayer = async () => {
-    if (!token || !expandedSession) return;
-    setError("");
-    const name = playerName.trim();
-    if (!name) {
-      setError("Enter a player name.");
+  const alreadyAddedUserIds = new Set(
+    sessionDetail?.players.filter((p) => p.user_id).map((p) => p.user_id!) ?? []
+  );
+  const alreadyAddedNames = new Set(
+    sessionDetail?.players.map((p) => p.player_name.toLowerCase()) ?? []
+  );
+
+  const availableUsers = allUsers.filter((u) => !alreadyAddedUserIds.has(u.id));
+
+  const toggleUserSelection = (userId: string) => {
+    setSelectedUserIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    setSelectedUserIds(new Set(availableUsers.map((u) => u.id)));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedUserIds(new Set());
+  };
+
+  const handleAddOtherPlayer = () => {
+    const trimmed = otherName.trim();
+    if (!trimmed) {
+      setError("Enter a name for the player.");
       return;
     }
+    if (
+      alreadyAddedNames.has(trimmed.toLowerCase()) ||
+      otherPlayers.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())
+    ) {
+      setError("This player is already added or queued.");
+      return;
+    }
+    setOtherPlayers((prev) => [
+      ...prev,
+      { id: `other-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: trimmed },
+    ]);
+    setOtherName("");
+    setError("");
+  };
+
+  const handleRemoveOtherPlayer = (id: string) => {
+    setOtherPlayers((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const totalToAdd = selectedUserIds.size + otherPlayers.length;
+
+  const handleAddSelectedPlayers = async () => {
+    if (!token || !expandedSession) return;
+    if (totalToAdd === 0) {
+      setError("Select at least one player to add.");
+      return;
+    }
+    setError("");
+    setAddingPlayers(true);
     try {
-      const detail = await addSessionPlayer(
-        expandedSession,
-        name,
-        selectedUserId || null,
-        token
-      );
-      setSessionDetail(detail);
-      setPlayerName("");
-      setSelectedUserId("");
+      let latestDetail: SessionDetail | null = null;
+
+      for (const userId of selectedUserIds) {
+        const matchedUser = allUsers.find((u) => u.id === userId);
+        const name = matchedUser?.full_name || matchedUser?.username || "Unknown";
+        latestDetail = await addSessionPlayer(expandedSession, name, userId, token);
+      }
+
+      for (const other of otherPlayers) {
+        latestDetail = await addSessionPlayer(expandedSession, other.name, null, token);
+      }
+
+      if (latestDetail) setSessionDetail(latestDetail);
+      setSelectedUserIds(new Set());
+      setOtherPlayers([]);
       await loadSessions();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add player");
+      setError(err instanceof Error ? err.message : "Failed to add players");
+    } finally {
+      setAddingPlayers(false);
     }
   };
 
@@ -205,14 +267,6 @@ export default function AccountingPage() {
       await loadSessions();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update payment");
-    }
-  };
-
-  const handleUserSelect = (userId: string) => {
-    setSelectedUserId(userId);
-    const matchedUser = allUsers.find((u) => u.id === userId);
-    if (matchedUser) {
-      setPlayerName(matchedUser.full_name || matchedUser.username);
     }
   };
 
@@ -397,36 +451,108 @@ export default function AccountingPage() {
                       {/* Expanded detail */}
                       {isExpanded && sessionDetail && sessionDetail.session.id === session.id && (
                         <div className="px-5 pb-5" style={{ borderTop: "1px solid var(--border-color)" }}>
-                          {/* Add player */}
+                          {/* Add Other Player */}
                           <div className="pt-4 mb-4">
-                            <h4 className="text-sm font-bold mb-3" style={{ fontFamily: "var(--font-display)" }}>
-                              Add Player
+                            <h4 className="text-sm font-bold mb-1" style={{ fontFamily: "var(--font-display)" }}>
+                              Add Other Player
                             </h4>
+                            <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+                              If someone is not a registered user, add them here.
+                            </p>
                             <div className="flex flex-col sm:flex-row gap-3">
-                              <select
-                                value={selectedUserId}
-                                onChange={(e) => handleUserSelect(e.target.value)}
-                                className="input-field sm:max-w-[220px]"
-                              >
-                                <option value="">-- Link to user (optional) --</option>
-                                {allUsers.map((u) => (
-                                  <option key={u.id} value={u.id}>
-                                    {u.full_name || u.username}
-                                  </option>
-                                ))}
-                              </select>
                               <input
                                 type="text"
-                                value={playerName}
-                                onChange={(e) => setPlayerName(e.target.value)}
-                                placeholder="Player name..."
+                                value={otherName}
+                                onChange={(e) => setOtherName(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleAddOtherPlayer(); }}
+                                placeholder="Enter player name..."
                                 className="input-field flex-1"
                               />
-                              <button onClick={handleAddPlayer} className="btn-primary text-sm px-4 py-2.5 inline-flex items-center gap-1.5">
-                                <Plus size={14} />
-                                Add
+                              <button onClick={handleAddOtherPlayer} className="btn-primary text-sm px-5 py-2.5">
+                                Add Other
                               </button>
                             </div>
+                            {otherPlayers.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {otherPlayers.map((p) => (
+                                  <div
+                                    key={p.id}
+                                    className="flex items-center gap-2 rounded-full px-3 py-1.5"
+                                    style={{ background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.25)" }}
+                                  >
+                                    <span className="text-xs font-medium">{p.name}</span>
+                                    <button
+                                      onClick={() => handleRemoveOtherPlayer(p.id)}
+                                      className="text-xs bg-transparent border-none cursor-pointer p-0"
+                                      style={{ color: "var(--danger)" }}
+                                    >
+                                      <X size={12} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Registered users grid */}
+                          <div className="mb-4">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+                              <h4 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)" }}>
+                                Registered Users
+                              </h4>
+                              <div className="flex items-center gap-2">
+                                <button onClick={handleSelectAll} className="btn-secondary text-[11px] py-1.5 px-3">
+                                  Select All
+                                </button>
+                                <button onClick={handleClearSelection} className="btn-secondary text-[11px] py-1.5 px-3">
+                                  Clear
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+                              Selected: {selectedUserIds.size} / {availableUsers.length}
+                            </p>
+                            {availableUsers.length === 0 ? (
+                              <p className="text-xs py-2" style={{ color: "var(--text-muted)" }}>
+                                All registered users have been added to this session.
+                              </p>
+                            ) : (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[240px] overflow-y-auto pr-1">
+                                {availableUsers.map((u) => {
+                                  const checked = selectedUserIds.has(u.id);
+                                  return (
+                                    <button
+                                      key={u.id}
+                                      onClick={() => toggleUserSelection(u.id)}
+                                      className="w-full text-left rounded-lg px-3 py-2 transition-all border cursor-pointer"
+                                      style={{
+                                        background: checked ? "rgba(0,230,118,0.08)" : "var(--bg-elevated)",
+                                        borderColor: checked ? "rgba(0,230,118,0.35)" : "var(--border-color)",
+                                      }}
+                                    >
+                                      <p className="text-sm font-medium">{u.full_name || u.username}</p>
+                                      <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                                        @{u.username}
+                                      </p>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* Add selected button */}
+                            {totalToAdd > 0 && (
+                              <button
+                                onClick={handleAddSelectedPlayers}
+                                disabled={addingPlayers}
+                                className="btn-primary text-sm mt-4 inline-flex items-center gap-2 disabled:opacity-50"
+                              >
+                                <Plus size={16} />
+                                {addingPlayers
+                                  ? "Adding..."
+                                  : `Add ${totalToAdd} Player${totalToAdd !== 1 ? "s" : ""}`}
+                              </button>
+                            )}
                           </div>
 
                           {/* Player list */}
