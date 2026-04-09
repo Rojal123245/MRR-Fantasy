@@ -135,6 +135,44 @@ async fn main() {
         .merge(league_public_routes)
         .merge(league_protected_routes);
 
+    // Accounting routes (mixed: admin + auth-only)
+    let accounting_admin_routes = Router::new()
+        .route("/sessions", post(handlers::accounting::create_session))
+        .route("/sessions", get(handlers::accounting::list_sessions))
+        .route("/sessions/:id", get(handlers::accounting::get_session))
+        .route("/sessions/:id", delete(handlers::accounting::delete_session))
+        .route(
+            "/sessions/:id/players",
+            post(handlers::accounting::add_player),
+        )
+        .route(
+            "/sessions/:session_id/players/:player_id",
+            delete(handlers::accounting::remove_player),
+        )
+        .route(
+            "/sessions/:session_id/players/:player_id/pay",
+            put(handlers::accounting::toggle_pay),
+        )
+        .route("/users", get(handlers::accounting::list_users))
+        .route("/user-summary", get(handlers::accounting::user_summary))
+        .layer(middleware::from_fn(auth::admin::admin_middleware))
+        .layer(middleware::from_fn(auth::middleware::auth_middleware))
+        .layer(Extension(state.pool.clone()))
+        .layer(Extension(config.jwt_secret.clone()));
+
+    let accounting_user_routes = Router::new()
+        .route("/my-dues", get(handlers::accounting::my_dues))
+        .route(
+            "/sessions/:session_id/players/:player_id/pay",
+            put(handlers::accounting::toggle_pay),
+        )
+        .layer(middleware::from_fn(auth::middleware::auth_middleware))
+        .layer(Extension(config.jwt_secret.clone()));
+
+    let accounting_routes = Router::new()
+        .merge(accounting_admin_routes)
+        .merge(accounting_user_routes);
+
     // Admin routes (protected by both auth + admin middleware)
     let admin_routes = Router::new()
         .route("/gameweek", post(handlers::admin::create_gameweek))
@@ -169,6 +207,7 @@ async fn main() {
         .nest("/api/points", points_routes)
         .nest("/api/teams", team_routes)
         .nest("/api/leagues", league_routes)
+        .nest("/api/accounting", accounting_routes)
         .nest("/api/admin", admin_routes)
         .layer(cors)
         .with_state(state);

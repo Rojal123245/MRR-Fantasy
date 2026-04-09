@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Trophy, Users, Shield, LayoutDashboard, LogOut, Menu, X, Settings, Shuffle } from "lucide-react";
+import { Trophy, Users, Shield, LayoutDashboard, LogOut, Menu, X, Settings, Shuffle, Calculator } from "lucide-react";
 import { getUser, clearAuth, isAuthenticated } from "@/lib/auth";
 import type { User } from "@/lib/api";
 
@@ -29,7 +29,11 @@ export default function Nav() {
   }, []);
 
   const navLinks = user?.is_admin
-    ? [...baseNavLinks, { href: "/admin", label: "Admin", icon: Settings }]
+    ? [
+        ...baseNavLinks,
+        { href: "/accounting", label: "Accounting", icon: Calculator },
+        { href: "/admin", label: "Admin", icon: Settings },
+      ]
     : baseNavLinks;
 
   const handleLogout = () => {
