@@ -135,7 +135,7 @@ async fn main() {
         .merge(league_public_routes)
         .merge(league_protected_routes);
 
-    // Accounting routes (mixed: admin + auth-only)
+    // Accounting routes (mixed: admin-only + auth-only)
     let accounting_admin_routes = Router::new()
         .route("/sessions", post(handlers::accounting::create_session))
         .route("/sessions", get(handlers::accounting::list_sessions))
@@ -149,10 +149,6 @@ async fn main() {
             "/sessions/:session_id/players/:player_id",
             delete(handlers::accounting::remove_player),
         )
-        .route(
-            "/sessions/:session_id/players/:player_id/pay",
-            put(handlers::accounting::toggle_pay),
-        )
         .route("/users", get(handlers::accounting::list_users))
         .route("/user-summary", get(handlers::accounting::user_summary))
         .layer(middleware::from_fn(auth::admin::admin_middleware))
@@ -160,7 +156,7 @@ async fn main() {
         .layer(Extension(state.pool.clone()))
         .layer(Extension(config.jwt_secret.clone()));
 
-    let accounting_user_routes = Router::new()
+    let accounting_auth_routes = Router::new()
         .route("/my-dues", get(handlers::accounting::my_dues))
         .route(
             "/sessions/:session_id/players/:player_id/pay",
@@ -171,7 +167,7 @@ async fn main() {
 
     let accounting_routes = Router::new()
         .merge(accounting_admin_routes)
-        .merge(accounting_user_routes);
+        .merge(accounting_auth_routes);
 
     // Admin routes (protected by both auth + admin middleware)
     let admin_routes = Router::new()
