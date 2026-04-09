@@ -468,3 +468,113 @@ export function submitWeekStats(
     { method: "POST", body: stats, token }
   );
 }
+
+// Accounting
+export interface FutsalSession {
+  id: string;
+  title: string;
+  total_amount: string;
+  player_count: number;
+  paid_count: number;
+  created_at: string;
+}
+
+export interface SessionPlayer {
+  id: string;
+  session_id: string;
+  user_id: string | null;
+  player_name: string;
+  amount_due: string;
+  is_paid: boolean;
+  paid_at: string | null;
+}
+
+export interface SessionDetail {
+  session: FutsalSession;
+  players: SessionPlayer[];
+}
+
+export interface AccountingUser {
+  id: string;
+  username: string;
+  full_name: string;
+}
+
+export interface UserDue {
+  session_id: string;
+  session_title: string;
+  player_entry_id: string;
+  amount_due: string;
+  is_paid: boolean;
+}
+
+export interface UserSummary {
+  user_id: string | null;
+  player_name: string;
+  total_due: string;
+  total_paid: string;
+  total_unpaid: string;
+  sessions_count: number;
+}
+
+export function createFutsalSession(title: string, totalAmount: number, token: string) {
+  return apiFetch<FutsalSession>("/api/accounting/sessions", {
+    method: "POST",
+    body: { title, total_amount: totalAmount },
+    token,
+  });
+}
+
+export function getFutsalSessions(token: string) {
+  return apiFetch<FutsalSession[]>("/api/accounting/sessions", { token });
+}
+
+export function getFutsalSession(id: string, token: string) {
+  return apiFetch<SessionDetail>(`/api/accounting/sessions/${id}`, { token });
+}
+
+export function deleteFutsalSession(id: string, token: string) {
+  return apiFetch<{ ok: boolean }>(`/api/accounting/sessions/${id}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export function addSessionPlayer(
+  sessionId: string,
+  playerName: string,
+  userId: string | null,
+  token: string
+) {
+  return apiFetch<SessionDetail>(`/api/accounting/sessions/${sessionId}/players`, {
+    method: "POST",
+    body: { player_name: playerName, user_id: userId },
+    token,
+  });
+}
+
+export function removeSessionPlayer(sessionId: string, playerId: string, token: string) {
+  return apiFetch<SessionDetail>(
+    `/api/accounting/sessions/${sessionId}/players/${playerId}`,
+    { method: "DELETE", token }
+  );
+}
+
+export function togglePlayerPaid(sessionId: string, playerId: string, token: string) {
+  return apiFetch<SessionDetail>(
+    `/api/accounting/sessions/${sessionId}/players/${playerId}/pay`,
+    { method: "PUT", token }
+  );
+}
+
+export function getAccountingUsers(token: string) {
+  return apiFetch<AccountingUser[]>("/api/accounting/users", { token });
+}
+
+export function getUserSummary(token: string) {
+  return apiFetch<UserSummary[]>("/api/accounting/user-summary", { token });
+}
+
+export function getMyDues(token: string) {
+  return apiFetch<UserDue[]>("/api/accounting/my-dues", { token });
+}

@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Shield, Users, Trophy, Zap, ChevronRight, Plus } from "lucide-react";
+import { Shield, Users, Trophy, Zap, ChevronRight, Plus, CheckCircle2, Circle, Calculator } from "lucide-react";
 import Nav from "@/components/nav";
 import PointsBadge from "@/components/points-badge";
-import { getMyTeam, type FantasyTeam } from "@/lib/api";
+import { getMyTeam, getMyDues, togglePlayerPaid, type FantasyTeam, type UserDue } from "@/lib/api";
 import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
 export default function DashboardPage() {
@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [team, setTeam] = useState<FantasyTeam | null>(null);
   const [loading, setLoading] = useState(true);
   const [noTeam, setNoTeam] = useState(false);
+  const [dues, setDues] = useState<UserDue[]>([]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -25,10 +26,10 @@ export default function DashboardPage() {
     const token = getToken();
     if (!token) return;
 
-    getMyTeam(token)
-      .then(setTeam)
-      .catch(() => setNoTeam(true))
-      .finally(() => setLoading(false));
+    Promise.all([
+      getMyTeam(token).then(setTeam).catch(() => setNoTeam(true)),
+      getMyDues(token).then(setDues).catch(() => {}),
+    ]).finally(() => setLoading(false));
   }, [router]);
 
   const user = getUser();
@@ -166,6 +167,80 @@ export default function DashboardPage() {
                   <ChevronRight size={16} style={{ color: "var(--text-muted)" }} />
                 </Link>
               </motion.div>
+
+              {/* Futsal Dues */}
+              {dues.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 }}
+                >
+                  <div className="glass-card p-5">
+                    <div className="flex items-center gap-2.5 mb-4">
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "rgba(255, 171, 0, 0.1)" }}>
+                        <Calculator size={16} style={{ color: "var(--accent-amber)" }} />
+                      </div>
+                      <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)" }}>Futsal Dues</h3>
+                    </div>
+                    <div className="space-y-2">
+                      {dues.map((due) => {
+                        const token = getToken();
+                        return (
+                          <div
+                            key={due.player_entry_id}
+                            className="flex items-center justify-between rounded-lg px-3 py-2"
+                            style={{
+                              background: due.is_paid ? "rgba(0, 230, 118, 0.06)" : "var(--bg-elevated)",
+                              border: `1px solid ${due.is_paid ? "rgba(0, 230, 118, 0.15)" : "var(--border-color)"}`,
+                            }}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <button
+                                onClick={async () => {
+                                  if (!token) return;
+                                  try {
+                                    await togglePlayerPaid(due.session_id, due.player_entry_id, token);
+                                    const updated = await getMyDues(token);
+                                    setDues(updated);
+                                  } catch {}
+                                }}
+                                className="bg-transparent border-none cursor-pointer p-0 shrink-0"
+                                title={due.is_paid ? "Paid" : "Mark as paid"}
+                              >
+                                {due.is_paid ? (
+                                  <CheckCircle2 size={16} style={{ color: "var(--accent-green)" }} />
+                                ) : (
+                                  <Circle size={16} style={{ color: "var(--text-muted)" }} />
+                                )}
+                              </button>
+                              <p className={`text-xs font-medium truncate ${due.is_paid ? "line-through opacity-60" : ""}`}>
+                                {due.session_title}
+                              </p>
+                            </div>
+                            <span
+                              className="text-xs font-bold ml-2 shrink-0"
+                              style={{
+                                fontFamily: "var(--font-display)",
+                                color: due.is_paid ? "var(--accent-green)" : "var(--accent-amber)",
+                              }}
+                            >
+                              Rs. {parseFloat(due.amount_due).toFixed(0)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {dues.some((d) => !d.is_paid) && (
+                      <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop: "1px solid var(--border-color)" }}>
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>Total unpaid</span>
+                        <span className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--danger)" }}>
+                          Rs. {dues.filter((d) => !d.is_paid).reduce((sum, d) => sum + parseFloat(d.amount_due), 0).toFixed(0)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
             </div>
           </div>
         )}
