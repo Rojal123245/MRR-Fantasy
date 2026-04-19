@@ -10,6 +10,7 @@ use crate::models::{
     AuthResponse, LoginRequest, MessageResponse, RegisterRequest, ResetPasswordRequest, User,
     UserResponse,
 };
+use crate::services::randomizer::RandomizerHub;
 
 use super::jwt::create_token;
 
@@ -18,6 +19,7 @@ use super::jwt::create_token;
 pub struct AppState {
     pub pool: PgPool,
     pub jwt_secret: String,
+    pub randomizer: RandomizerHub,
 }
 
 /// POST /api/auth/register

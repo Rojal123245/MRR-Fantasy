@@ -4,4 +4,5 @@ pub mod chips;
 pub mod leagues;
 pub mod players;
 pub mod points;
+pub mod randomizer;
 pub mod teams;

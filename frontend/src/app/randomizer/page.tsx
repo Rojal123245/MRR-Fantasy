@@ -1,71 +1,69 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Shuffle, Users, ShieldCheck, AlertCircle } from "lucide-react";
+import {
+  AlertCircle,
+  LogOut,
+  RefreshCw,
+  ShieldCheck,
+  Shuffle,
+  UserPlus,
+  Users,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 import Nav from "@/components/nav";
-import { getPlayers, type Player } from "@/lib/api";
-import { isAuthenticated } from "@/lib/auth";
+import {
+  getRandomizerWebSocketUrl,
+  type RandomizerClientMessage,
+  type RandomizerRoomStateMessage,
+  type RandomizerServerMessage,
+} from "@/lib/api";
+import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
-const ADVANCE_PLAYERS = [
-  "Aashish Tangnami",
-  "Rajeev Lamichhaney",
-  "Razz Kumar Basnet",
-  "Aashis Bhattarai",
-  "Dip Kc",
-] as const;
-
-const GOALKEEPERS = [
-  "Anod Shrestha",
-  "Bishnu Raj Tamang",
-  "Himal Puri",
-  "Nitesh Das",
-] as const;
-
-type TeamSlot = {
-  player: {
-    id: string;
-    name: string;
-    team_name: string;
-  };
-  category: "Advance" | "GK" | "Regular";
-};
-
-type TeamCategory = "Advance" | "GK" | "Regular";
-
-type SelectablePlayer = {
-  id: string;
-  name: string;
-  team_name: string;
-  source: "listed" | "other";
-  forcedCategory?: TeamCategory;
-};
-
-function normalizeName(name: string): string {
-  return name.trim().toLowerCase();
-}
-
-function shuffleArray<T>(items: T[]): T[] {
-  const next = [...items];
-  for (let i = next.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [next[i], next[j]] = [next[j], next[i]];
-  }
-  return next;
-}
+type SocketStatus = "connecting" | "connected" | "disconnected";
 
 export default function RandomizerPage() {
   const router = useRouter();
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [otherPlayers, setOtherPlayers] = useState<Array<{ id: string; name: string; category: TeamCategory }>>([]);
-  const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  const socketRef = useRef<WebSocket | null>(null);
+
+  const [roomState, setRoomState] = useState<RandomizerRoomStateMessage | null>(null);
+  const [socketStatus, setSocketStatus] = useState<SocketStatus>("connecting");
   const [teamCount, setTeamCount] = useState(2);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [teams, setTeams] = useState<TeamSlot[][]>([]);
-  const [otherName, setOtherName] = useState("");
-  const [otherCategory, setOtherCategory] = useState<TeamCategory>("Regular");
+  const [connectionVersion, setConnectionVersion] = useState(0);
+  const user = getUser();
+
+  const sendMessage = (message: RandomizerClientMessage) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setError("Realtime connection is not ready.");
+      return;
+    }
+
+    socket.send(JSON.stringify(message));
+  };
+
+  const handleServerMessage = (rawMessage: string) => {
+    try {
+      const message = JSON.parse(rawMessage) as RandomizerServerMessage;
+      if (message.type === "room_state") {
+        setRoomState(message);
+        setLoading(false);
+        setError("");
+        return;
+      }
+
+      if (message.type === "error") {
+        setError(message.message);
+      }
+    } catch {
+      setError("Received an invalid randomizer message from the server.");
+    }
+  };
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -73,456 +71,397 @@ export default function RandomizerPage() {
       return;
     }
 
-    getPlayers()
-      .then((allPlayers) => {
-        setPlayers(allPlayers);
-        setSelectedPlayerIds(allPlayers.map((player) => player.id));
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load players"))
-      .finally(() => setLoading(false));
-  }, [router]);
+    const token = getToken();
+    const currentUser = getUser();
+    if (!token || !currentUser) {
+      router.push("/login");
+      return;
+    }
 
-  const allSelectablePlayers = useMemo<SelectablePlayer[]>(() => {
-    const listed = players.map((player) => ({
-      id: player.id,
-      name: player.name,
-      team_name: player.team_name,
-      source: "listed" as const,
-    }));
-    const others = otherPlayers.map((player) => ({
-      id: player.id,
-      name: player.name,
-      team_name: "Others",
-      source: "other" as const,
-      forcedCategory: player.category,
-    }));
-    return [...listed, ...others];
-  }, [players, otherPlayers]);
+    let cancelled = false;
+    const socket = new WebSocket(getRandomizerWebSocketUrl(token));
+    socketRef.current = socket;
 
-  const selectedPlayers = useMemo(() => {
-    const selectedSet = new Set(selectedPlayerIds);
-    return allSelectablePlayers.filter((player) => selectedSet.has(player.id));
-  }, [allSelectablePlayers, selectedPlayerIds]);
+    socket.onopen = () => {
+      if (cancelled) return;
+      setSocketStatus("connected");
+    };
 
-  const categorizedPools = useMemo(() => {
-    const advanceSet = new Set(ADVANCE_PLAYERS.map(normalizeName));
-    const gkSet = new Set(GOALKEEPERS.map(normalizeName));
+    socket.onmessage = (event) => {
+      if (cancelled) return;
+      if (typeof event.data === "string") {
+        handleServerMessage(event.data);
+      }
+    };
 
-    const advancePool = selectedPlayers.filter((player) => {
-      if (player.source === "other") return player.forcedCategory === "Advance";
-      return advanceSet.has(normalizeName(player.name));
-    });
-    const gkPool = selectedPlayers.filter((player) => {
-      if (player.source === "other") return player.forcedCategory === "GK";
-      return gkSet.has(normalizeName(player.name));
-    });
-    const regularPool = selectedPlayers.filter((player) => {
-      if (player.source === "other") return player.forcedCategory === "Regular";
-      return !advanceSet.has(normalizeName(player.name)) && !gkSet.has(normalizeName(player.name));
-    });
+    socket.onerror = () => {
+      if (cancelled) return;
+      setError("Realtime connection failed.");
+      setLoading(false);
+    };
 
-    const availableNames = new Set(players.map((player) => normalizeName(player.name)));
-    const missingAdvance = ADVANCE_PLAYERS.filter((name) => !availableNames.has(normalizeName(name)));
-    const missingGk = GOALKEEPERS.filter((name) => !availableNames.has(normalizeName(name)));
+    socket.onclose = () => {
+      if (cancelled) return;
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
+      setSocketStatus("disconnected");
+      setLoading(false);
+    };
 
-    return { advancePool, gkPool, regularPool, missingAdvance, missingGk };
-  }, [players, selectedPlayers]);
+    return () => {
+      cancelled = true;
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
+      socket.close();
+    };
+  }, [connectionVersion, router]);
 
-  const maxBalancedTeamsPossible = Math.min(
-    categorizedPools.advancePool.length,
-    Math.floor(selectedPlayers.length / 6)
+  const currentParticipant = useMemo(
+    () => roomState?.participants.find((participant) => participant.user_id === user?.id) ?? null,
+    [roomState?.participants, user?.id]
   );
 
-  const togglePlayer = (playerId: string) => {
-    setSelectedPlayerIds((prev) =>
-      prev.includes(playerId) ? prev.filter((id) => id !== playerId) : [...prev, playerId]
+  const categoryCounts = useMemo(() => {
+    const participants = roomState?.participants ?? [];
+    return participants.reduce(
+      (counts, participant) => {
+        if (participant.category === "Advance") counts.advance += 1;
+        else if (participant.category === "GK") counts.gk += 1;
+        else counts.regular += 1;
+        return counts;
+      },
+      { advance: 0, gk: 0, regular: 0 }
     );
-    setTeams([]);
-  };
+  }, [roomState?.participants]);
 
-  const handleAddOtherPlayer = () => {
-    const trimmedName = otherName.trim();
-    if (!trimmedName) {
-      setError("Enter a name for the player.");
-      return;
-    }
-
-    const normalized = normalizeName(trimmedName);
-    const alreadyExists = allSelectablePlayers.some((player) => normalizeName(player.name) === normalized);
-    if (alreadyExists) {
-      setError("This player name already exists in the list.");
-      return;
-    }
-
-    const newPlayerId = `other-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setOtherPlayers((prev) => [...prev, { id: newPlayerId, name: trimmedName, category: otherCategory }]);
-    setSelectedPlayerIds((prev) => [...prev, newPlayerId]);
-    setOtherName("");
-    setOtherCategory("Regular");
+  const handleReconnect = () => {
+    socketRef.current?.close();
+    setRoomState(null);
     setError("");
-    setTeams([]);
+    setSocketStatus("connecting");
+    setLoading(true);
+    setConnectionVersion((value) => value + 1);
   };
 
-  const handleRemoveOtherPlayer = (playerId: string) => {
-    setOtherPlayers((prev) => prev.filter((player) => player.id !== playerId));
-    setSelectedPlayerIds((prev) => prev.filter((id) => id !== playerId));
-    setTeams([]);
+  const handleJoin = () => {
+    setError("");
+    sendMessage({ type: "join_room" });
+  };
+
+  const handleLeave = () => {
+    setError("");
+    sendMessage({ type: "leave_room" });
   };
 
   const handleRandomize = () => {
     setError("");
-
-    if (selectedPlayers.length === 0) {
-      setError("Select players who came to play first.");
-      return;
-    }
 
     if (!Number.isInteger(teamCount) || teamCount <= 0) {
       setError("Please enter a valid team count.");
       return;
     }
 
-    if (selectedPlayers.length < teamCount) {
-      setError("Selected players are fewer than number of teams.");
-      return;
-    }
-
-    const nextTeams: TeamSlot[][] = Array.from({ length: teamCount }, () => []);
-    const shuffledAdvance = shuffleArray(categorizedPools.advancePool);
-    const shuffledGk = shuffleArray(categorizedPools.gkPool);
-    const balancedTeamCount = Math.min(teamCount, Math.floor(selectedPlayers.length / 6), shuffledAdvance.length);
-
-    for (let i = 0; i < balancedTeamCount; i += 1) {
-      nextTeams[i].push({ player: shuffledAdvance[i], category: "Advance" });
-    }
-
-    const teamOrderForGk = shuffleArray(Array.from({ length: balancedTeamCount }, (_, i) => i));
-    const guaranteedGkCount = Math.min(balancedTeamCount, shuffledGk.length);
-    for (let i = 0; i < guaranteedGkCount; i += 1) {
-      nextTeams[teamOrderForGk[i]].push({ player: shuffledGk[i], category: "GK" });
-    }
-
-    const remainingPool: TeamSlot[] = [
-      ...shuffledAdvance.slice(balancedTeamCount).map((player) => ({ player, category: "Advance" as const })),
-      ...shuffledGk.slice(guaranteedGkCount).map((player) => ({ player, category: "GK" as const })),
-      ...categorizedPools.regularPool.map((player) => ({ player, category: "Regular" as const })),
-    ];
-    const shuffledRemainingPool = shuffleArray(remainingPool);
-
-    let remainingIdx = 0;
-    while (remainingIdx < shuffledRemainingPool.length) {
-      const fillOrder = shuffleArray(Array.from({ length: balancedTeamCount }, (_, i) => i));
-      let filledAny = false;
-      for (const team of fillOrder) {
-        if (remainingIdx >= shuffledRemainingPool.length) break;
-        if (nextTeams[team].length >= 6) continue;
-        nextTeams[team].push(shuffledRemainingPool[remainingIdx]);
-        remainingIdx += 1;
-        filledAny = true;
-      }
-      if (!filledAny) break;
-    }
-
-    const remainingTeamIndices = Array.from(
-      { length: Math.max(teamCount - balancedTeamCount, 0) },
-      (_, idx) => idx + balancedTeamCount
-    );
-
-    let teamCycle = 0;
-    while (remainingIdx < shuffledRemainingPool.length && remainingTeamIndices.length > 0) {
-      const targetTeam = remainingTeamIndices[teamCycle % remainingTeamIndices.length];
-      nextTeams[targetTeam].push(shuffledRemainingPool[remainingIdx]);
-      remainingIdx += 1;
-      teamCycle += 1;
-    }
-
-    if (nextTeams.every((team) => team.length === 0)) {
-      setError("Could not create teams from the selected players.");
-      setTeams([]);
-      return;
-    }
-
-    if (balancedTeamCount < teamCount) {
-      const unbalanced = teamCount - balancedTeamCount;
-      setError(`${balancedTeamCount} balanced team(s) created. ${unbalanced} team(s) include remaining players.`);
-    }
-
-    setTeams(nextTeams.map((team) => shuffleArray(team)).filter((team) => team.length > 0));
+    sendMessage({ type: "randomize", team_count: teamCount });
   };
+
+  const participants = roomState?.participants ?? [];
+  const teams = roomState?.teams ?? [];
 
   return (
     <div className="min-h-screen pitch-pattern">
       <Nav />
       <div className="pt-24 pb-12 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
-          <h1 className="text-3xl sm:text-4xl font-bold" style={{ fontFamily: "var(--font-display)" }}>
-            FUTSAL <span style={{ color: "var(--accent-green)" }}>RANDOMIZER</span>
-          </h1>
-          <p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>
-            Select the players who came to play, then create balanced 6-player teams first (1 Advance each,
-            GK when available). Any extra requested team gets the remaining players.
-          </p>
-        </motion.div>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-bold" style={{ fontFamily: "var(--font-display)" }}>
+                REALTIME <span style={{ color: "var(--accent-green)" }}>RANDOMIZER</span>
+              </h1>
+              <p className="mt-2 text-sm max-w-3xl" style={{ color: "var(--text-muted)" }}>
+                Join the current match with your account, then randomize only the players who are actually on the
+                field. The backend owns the room state and broadcasts the same teams to everyone.
+              </p>
+            </div>
 
-        <div className="glass-card p-5 sm:p-6 mb-6">
-          <div className="mb-5">
-            <h2 className="text-lg font-bold mb-2" style={{ fontFamily: "var(--font-display)" }}>
-              Add Other Player
-            </h2>
-            <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
-              If someone is not listed in MRR Fantasy, add them here and choose their category.
-            </p>
-            <div className="flex flex-col lg:flex-row gap-3">
-              <input
-                type="text"
-                value={otherName}
-                onChange={(e) => setOtherName(e.target.value)}
-                placeholder="Enter player name..."
-                className="input-field"
-              />
-              <select
-                value={otherCategory}
-                onChange={(e) => setOtherCategory(e.target.value as TeamCategory)}
-                className="input-field lg:max-w-[180px]"
+            <div className="flex flex-wrap items-center gap-3">
+              <div
+                className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold"
+                style={{
+                  background:
+                    socketStatus === "connected"
+                      ? "rgba(0,230,118,0.12)"
+                      : socketStatus === "connecting"
+                      ? "rgba(245,158,11,0.12)"
+                      : "rgba(255,82,82,0.12)",
+                  border:
+                    socketStatus === "connected"
+                      ? "1px solid rgba(0,230,118,0.25)"
+                      : socketStatus === "connecting"
+                      ? "1px solid rgba(245,158,11,0.25)"
+                      : "1px solid rgba(255,82,82,0.25)",
+                }}
               >
-                <option value="Advance">Advance</option>
-                <option value="GK">GK</option>
-                <option value="Regular">Regular</option>
-              </select>
-              <button onClick={handleAddOtherPlayer} className="btn-primary text-sm px-5 py-3">
-                Add Other
+                {socketStatus === "connected" ? <Wifi size={14} /> : <WifiOff size={14} />}
+                {socketStatus === "connected"
+                  ? "Connected"
+                  : socketStatus === "connecting"
+                  ? "Connecting..."
+                  : "Disconnected"}
+              </div>
+
+              <button onClick={handleReconnect} className="btn-secondary text-xs inline-flex items-center gap-2">
+                <RefreshCw size={14} />
+                Reconnect
               </button>
             </div>
-            {otherPlayers.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {otherPlayers.map((player) => (
-                  <div
-                    key={player.id}
-                    className="flex items-center gap-2 rounded-full px-3 py-1.5"
-                    style={{ background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.25)" }}
-                  >
-                    <span className="text-xs font-medium">
-                      {player.name} ({player.category})
-                    </span>
-                    <button
-                      onClick={() => handleRemoveOtherPlayer(player.id)}
-                      className="text-xs bg-transparent border-none cursor-pointer"
-                      style={{ color: "var(--danger)" }}
-                    >
-                      x
+          </div>
+        </motion.div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-6">
+          <div className="space-y-6">
+            <div className="glass-card p-5 sm:p-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-bold mb-1" style={{ fontFamily: "var(--font-display)" }}>
+                    Current Match
+                  </h2>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Joined players: {participants.length}
+                    {currentParticipant ? ` • You joined as ${currentParticipant.player_name}` : ""}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  {roomState?.joined ? (
+                    <button onClick={handleLeave} className="btn-secondary text-sm inline-flex items-center gap-2">
+                      <LogOut size={15} />
+                      Leave Match
                     </button>
+                  ) : (
+                    <button
+                      onClick={handleJoin}
+                      disabled={socketStatus !== "connected" || !roomState?.can_join}
+                      className="btn-primary text-sm inline-flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <UserPlus size={15} />
+                      Join Current Match
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5 text-xs">
+                <div className="rounded-xl px-3 py-2" style={{ background: "rgba(0,230,118,0.08)" }}>
+                  <strong style={{ color: "var(--accent-green)" }}>Advance:</strong> {categoryCounts.advance}
+                </div>
+                <div className="rounded-xl px-3 py-2" style={{ background: "rgba(245,158,11,0.08)" }}>
+                  <strong style={{ color: "var(--accent-amber)" }}>GK:</strong> {categoryCounts.gk}
+                </div>
+                <div className="rounded-xl px-3 py-2" style={{ background: "rgba(59,130,246,0.08)" }}>
+                  <strong style={{ color: "#60a5fa" }}>Regular:</strong> {categoryCounts.regular}
+                </div>
+              </div>
+
+              <div className="mt-5 max-h-[360px] overflow-y-auto pr-1 space-y-2">
+                {participants.length > 0 ? (
+                  participants.map((participant) => (
+                    <div
+                      key={participant.user_id}
+                      className="flex items-center justify-between rounded-lg px-3 py-3"
+                      style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-color)" }}
+                    >
+                      <div>
+                        <p className="text-sm font-medium">{participant.player_name}</p>
+                        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                          Joined by {participant.username}
+                        </p>
+                      </div>
+                      <span
+                        className="text-[10px] font-bold px-2 py-1 rounded-full"
+                        style={{
+                          fontFamily: "var(--font-display)",
+                          background:
+                            participant.category === "Advance"
+                              ? "rgba(0,230,118,0.18)"
+                              : participant.category === "GK"
+                              ? "rgba(245,158,11,0.18)"
+                              : "rgba(59,130,246,0.18)",
+                          color:
+                            participant.category === "Advance"
+                              ? "var(--accent-green)"
+                              : participant.category === "GK"
+                              ? "var(--accent-amber)"
+                              : "#60a5fa",
+                        }}
+                      >
+                        {participant.category}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div
+                    className="rounded-xl px-4 py-6 text-sm text-center"
+                    style={{ background: "var(--bg-elevated)", border: "1px dashed var(--border-color)" }}
+                  >
+                    No one has joined the current match yet.
                   </div>
-                ))}
+                )}
+              </div>
+            </div>
+
+            <div className="glass-card p-5 sm:p-6">
+              <div className="flex flex-col md:flex-row md:items-end gap-4">
+                <div className="w-full md:max-w-xs">
+                  <label
+                    htmlFor="team-count"
+                    className="block text-xs uppercase tracking-[0.14em] mb-2"
+                    style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}
+                  >
+                    Number of Teams
+                  </label>
+                  <input
+                    id="team-count"
+                    type="number"
+                    min={1}
+                    value={teamCount}
+                    onChange={(event) => setTeamCount(Number(event.target.value))}
+                    className="input-field"
+                  />
+                  <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
+                    Only joined players will be randomized.
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleRandomize}
+                  disabled={socketStatus !== "connected" || !roomState?.joined || participants.length === 0}
+                  className="btn-primary text-sm inline-flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <Shuffle size={16} />
+                  Randomize Teams
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {(error || roomState?.join_error) && (
+              <div
+                className="flex items-start gap-2 p-3 rounded-lg text-sm"
+                style={{
+                  background: "rgba(255, 82, 82, 0.1)",
+                  border: "1px solid rgba(255, 82, 82, 0.3)",
+                  color: "var(--danger)",
+                }}
+              >
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                <div>
+                  {error && <p>{error}</p>}
+                  {roomState?.join_error && <p>{roomState.join_error}</p>}
+                </div>
+              </div>
+            )}
+
+            {loading ? (
+              <div className="glass-card p-10 flex items-center justify-center">
+                <div
+                  className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
+                  style={{ borderColor: "var(--accent-green)", borderTopColor: "transparent" }}
+                />
+              </div>
+            ) : teams.length > 0 ? (
+              <div className="space-y-5">
+                {teams.map((team, idx) => {
+                  const advance = team.players.filter((player) => player.category === "Advance").length;
+                  const gk = team.players.filter((player) => player.category === "GK").length;
+                  const regular = team.players.filter((player) => player.category === "Regular").length;
+
+                  return (
+                    <motion.div
+                      key={`team-${team.team_number}`}
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.05 }}
+                      className="glass-card p-5"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-xl font-bold" style={{ fontFamily: "var(--font-display)" }}>
+                          Team {team.team_number}
+                        </h2>
+                        <div className="flex items-center gap-3 text-xs" style={{ color: "var(--text-muted)" }}>
+                          <span className="inline-flex items-center gap-1">
+                            <ShieldCheck size={13} style={{ color: "var(--accent-green)" }} /> A:{advance}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <Users size={13} style={{ color: "var(--accent-amber)" }} /> GK:{gk}
+                          </span>
+                          <span>R:{regular}</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {team.players.map((player) => (
+                          <div
+                            key={player.player_id}
+                            className="flex items-center justify-between rounded-lg px-3 py-2"
+                            style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-color)" }}
+                          >
+                            <p className="text-sm font-medium">{player.player_name}</p>
+                            <span
+                              className="text-[10px] font-bold px-2 py-1 rounded-full"
+                              style={{
+                                fontFamily: "var(--font-display)",
+                                background:
+                                  player.category === "Advance"
+                                    ? "rgba(0,230,118,0.18)"
+                                    : player.category === "GK"
+                                    ? "rgba(245,158,11,0.18)"
+                                    : "rgba(59,130,246,0.18)",
+                                color:
+                                  player.category === "Advance"
+                                    ? "var(--accent-green)"
+                                    : player.category === "GK"
+                                    ? "var(--accent-amber)"
+                                    : "#60a5fa",
+                              }}
+                            >
+                              {player.category}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="glass-card p-10 text-center text-sm">
+                <p className="text-base font-semibold mb-2" style={{ fontFamily: "var(--font-display)" }}>
+                  Waiting For A Live Shuffle
+                </p>
+                <p style={{ color: "var(--text-muted)" }}>
+                  Join the current match, then randomize teams from the joined players when everyone is ready.
+                </p>
+              </div>
+            )}
+
+            {currentParticipant && (
+              <div className="glass-card p-5">
+                <p className="text-xs uppercase tracking-[0.14em] mb-2" style={{ color: "var(--text-muted)" }}>
+                  You Are Playing As
+                </p>
+                <p className="text-lg font-bold" style={{ fontFamily: "var(--font-display)" }}>
+                  {currentParticipant.player_name}
+                </p>
+                <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                  Category: {currentParticipant.category}
+                </p>
               </div>
             )}
           </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-            <h2 className="text-lg font-bold" style={{ fontFamily: "var(--font-display)" }}>
-              Players Who Came To Play
-            </h2>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  setSelectedPlayerIds(allSelectablePlayers.map((player) => player.id));
-                  setTeams([]);
-                }}
-                className="btn-secondary text-[11px] py-2 px-3"
-              >
-                Select All
-              </button>
-              <button
-                onClick={() => {
-                  setSelectedPlayerIds([]);
-                  setTeams([]);
-                }}
-                className="btn-secondary text-[11px] py-2 px-3"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-
-          <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
-            Selected: {selectedPlayers.length} / {allSelectablePlayers.length}
-          </p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[320px] overflow-y-auto pr-1">
-            {allSelectablePlayers.map((player) => {
-              const checked = selectedPlayerIds.includes(player.id);
-              return (
-                <button
-                  key={player.id}
-                  onClick={() => togglePlayer(player.id)}
-                  className="w-full text-left rounded-lg px-3 py-2 transition-all border cursor-pointer"
-                  style={{
-                    background: checked ? "rgba(0,230,118,0.08)" : "var(--bg-elevated)",
-                    borderColor: checked ? "rgba(0,230,118,0.35)" : "var(--border-color)",
-                  }}
-                >
-                  <p className="text-sm font-medium">{player.name}</p>
-                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    {player.team_name}
-                    {player.source === "other" && player.forcedCategory ? ` • ${player.forcedCategory}` : ""}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
         </div>
-
-        <div className="glass-card p-5 sm:p-6 mb-6">
-          <div className="flex flex-col md:flex-row md:items-end gap-4">
-            <div className="w-full md:max-w-xs">
-              <label
-                htmlFor="team-count"
-                className="block text-xs uppercase tracking-[0.14em] mb-2"
-                style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}
-              >
-                Number of Teams
-              </label>
-              <input
-                id="team-count"
-                type="number"
-                min={1}
-                value={teamCount}
-                onChange={(e) => setTeamCount(Number(e.target.value))}
-                className="input-field"
-              />
-              <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
-                Max balanced teams possible: {maxBalancedTeamsPossible}
-              </p>
-            </div>
-            <button
-              onClick={handleRandomize}
-              disabled={loading || selectedPlayers.length === 0}
-              className="btn-primary text-sm inline-flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              <Shuffle size={16} />
-              Randomize Teams
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-5 text-xs">
-            <div className="rounded-xl px-3 py-2" style={{ background: "rgba(0,230,118,0.08)" }}>
-              <strong style={{ color: "var(--accent-green)" }}>Advance:</strong> {categorizedPools.advancePool.length}
-            </div>
-            <div className="rounded-xl px-3 py-2" style={{ background: "rgba(245,158,11,0.08)" }}>
-              <strong style={{ color: "var(--accent-amber)" }}>GK:</strong> {categorizedPools.gkPool.length}
-            </div>
-            <div className="rounded-xl px-3 py-2" style={{ background: "rgba(59,130,246,0.08)" }}>
-              <strong style={{ color: "#60a5fa" }}>Regular:</strong> {categorizedPools.regularPool.length}
-            </div>
-          </div>
-        </div>
-
-        {(error || categorizedPools.missingAdvance.length > 0 || categorizedPools.missingGk.length > 0) && (
-          <div
-            className="flex items-start gap-2 p-3 rounded-lg mb-6 text-sm"
-            style={{
-              background: "rgba(255, 82, 82, 0.1)",
-              border: "1px solid rgba(255, 82, 82, 0.3)",
-              color: "var(--danger)",
-            }}
-          >
-            <AlertCircle size={16} className="mt-0.5 shrink-0" />
-            <div>
-              {error && <p>{error}</p>}
-              {categorizedPools.missingAdvance.length > 0 && (
-                <p>Missing advance players: {categorizedPools.missingAdvance.join(", ")}</p>
-              )}
-              {categorizedPools.missingGk.length > 0 && (
-                <p>Missing goalkeepers: {categorizedPools.missingGk.join(", ")}</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div
-              className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
-              style={{ borderColor: "var(--accent-green)", borderTopColor: "transparent" }}
-            />
-          </div>
-        ) : teams.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {teams.map((team, idx) => {
-              const advance = team.filter((slot) => slot.category === "Advance").length;
-              const gk = team.filter((slot) => slot.category === "GK").length;
-              const regular = team.filter((slot) => slot.category === "Regular").length;
-
-              return (
-                <motion.div
-                  key={`team-${idx + 1}`}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.05 }}
-                  className="glass-card p-5"
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-bold" style={{ fontFamily: "var(--font-display)" }}>
-                      Team {idx + 1}
-                    </h2>
-                    <div className="flex items-center gap-3 text-xs" style={{ color: "var(--text-muted)" }}>
-                      <span className="inline-flex items-center gap-1">
-                        <ShieldCheck size={13} style={{ color: "var(--accent-green)" }} /> A:{advance}
-                      </span>
-                      <span className="inline-flex items-center gap-1">
-                        <Users size={13} style={{ color: "var(--accent-amber)" }} /> GK:{gk}
-                      </span>
-                      <span>R:{regular}</span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    {team.map((slot) => (
-                      <div
-                        key={`${slot.player.id}-${slot.category}`}
-                        className="flex items-center justify-between rounded-lg px-3 py-2"
-                        style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-color)" }}
-                      >
-                        <div>
-                          <p className="text-sm font-medium">{slot.player.name}</p>
-                          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                            {slot.player.team_name}
-                          </p>
-                        </div>
-                        <span
-                          className="text-[10px] font-bold px-2 py-1 rounded-full"
-                          style={{
-                            fontFamily: "var(--font-display)",
-                            background:
-                              slot.category === "Advance"
-                                ? "rgba(0,230,118,0.18)"
-                                : slot.category === "GK"
-                                ? "rgba(245,158,11,0.18)"
-                                : "rgba(59,130,246,0.18)",
-                            color:
-                              slot.category === "Advance"
-                                ? "var(--accent-green)"
-                                : slot.category === "GK"
-                                ? "var(--accent-amber)"
-                                : "#60a5fa",
-                          }}
-                        >
-                          {slot.category}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        ) : (
-          <div
-            className="glass-card p-10 text-center text-sm"
-            style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}
-          >
-            Enter team count and click <strong style={{ color: "var(--text-secondary)" }}>Randomize Teams</strong>.
-          </div>
-        )}
       </div>
     </div>
   );

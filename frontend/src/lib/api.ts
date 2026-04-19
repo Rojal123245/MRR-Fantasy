@@ -2,6 +2,12 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ??
   (process.env.NODE_ENV === "development" ? "http://localhost:8080" : "");
 
+function getOriginBase() {
+  if (API_BASE) return API_BASE;
+  if (typeof window !== "undefined") return window.location.origin;
+  return "";
+}
+
 interface FetchOptions {
   method?: string;
   body?: unknown;
@@ -92,6 +98,57 @@ export function getPlayers(position?: string, search?: string) {
 
 export function getPlayer(id: string) {
   return apiFetch<Player>(`/api/players/${id}`);
+}
+
+export type RandomizerCategory = "Advance" | "GK" | "Regular";
+
+export interface RandomizerParticipant {
+  user_id: string;
+  username: string;
+  player_id: string;
+  player_name: string;
+  category: RandomizerCategory;
+}
+
+export interface RandomizerTeamPlayer {
+  player_id: string;
+  player_name: string;
+  category: RandomizerCategory;
+}
+
+export interface RandomizerTeam {
+  team_number: number;
+  players: RandomizerTeamPlayer[];
+}
+
+export interface RandomizerRoomStateMessage {
+  type: "room_state";
+  joined: boolean;
+  can_join: boolean;
+  join_error: string | null;
+  participants: RandomizerParticipant[];
+  teams: RandomizerTeam[];
+}
+
+export interface RandomizerErrorMessage {
+  type: "error";
+  message: string;
+}
+
+export type RandomizerServerMessage = RandomizerRoomStateMessage | RandomizerErrorMessage;
+
+export type RandomizerClientMessage =
+  | { type: "join_room" }
+  | { type: "leave_room" }
+  | { type: "randomize"; team_count: number };
+
+export function getRandomizerWebSocketUrl(token: string) {
+  const originBase = getOriginBase();
+  const wsBase = originBase.startsWith("https://")
+    ? originBase.replace("https://", "wss://")
+    : originBase.replace("http://", "ws://");
+
+  return `${wsBase}/api/randomizer/ws?token=${encodeURIComponent(token)}`;
 }
 
 // Teams
