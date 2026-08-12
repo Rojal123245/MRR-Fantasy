@@ -450,18 +450,17 @@ pub async fn submit_week_stats(
         captain_id: Option<Uuid>,
     }
 
-    let teams = sqlx::query_as::<_, TeamScoreContext>(
-        r#"SELECT
-             ft.id,
-             tgl.id AS lineup_id,
-             COALESCE(tgl.captain_id, ft.captain_id) AS captain_id
-           FROM fantasy_teams ft
-           LEFT JOIN team_gameweek_lineups tgl
-             ON tgl.team_id = ft.id AND tgl.match_week_id = $1"#,
-    )
-    .bind(week.id)
-    .fetch_all(&mut *tx)
-    .await?;
+    let total_teams = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM fantasy_teams")
+        .fetch_one(&mut *tx)
+        .await?;
+
+    let teams = sqlx::query_as::<_, TeamScoreContext>(points_sql::scored_teams())
+        .bind(week.id)
+        .bind(week.end_date)
+        .fetch_all(&mut *tx)
+        .await?;
+
+    let teams_scored = teams.len() as i64;
 
     for team in teams {
         // A snapshot, once taken, is the source of truth for that week so later
@@ -562,7 +561,11 @@ pub async fn submit_week_stats(
     Ok(Json(serde_json::json!({
         "ok": true,
         "players_updated": stats.len(),
-        "week": week_number
+        "week": week_number,
+        "teams_scored": teams_scored,
+        // Teams that had not joined by the end of this week, so they are left out
+        // rather than scored against their current squad.
+        "teams_skipped": total_teams - teams_scored,
     })))
 }
 
