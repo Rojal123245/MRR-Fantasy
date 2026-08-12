@@ -8,11 +8,10 @@ use uuid::Uuid;
 use crate::auth::handler::AppState;
 use crate::auth::middleware::AuthUser;
 use crate::error::{AppError, AppResult};
-use crate::handlers::teams::compute_lock_status;
+use crate::handlers::teams::{compute_lock_status, fetch_team_starters};
 use crate::models::{
     CreateLeagueRequest, JoinLeagueRequest, League, LeagueDetail, LeagueGameweekDetail,
-    LeagueGameweekStanding, LeagueMemberStanding, MemberLineupResponse, MyLeague, Player,
-    PlayerPosition, StarterPlayer,
+    LeagueGameweekStanding, LeagueMemberStanding, MemberLineupResponse, MyLeague,
 };
 
 /// Generate a random 8-character alphanumeric invite code.
@@ -245,21 +244,6 @@ pub async fn get_league_gameweek(
     }))
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct LineupStarterRow {
-    id: Uuid,
-    name: String,
-    position: PlayerPosition,
-    secondary_position: Option<PlayerPosition>,
-    is_top_player: bool,
-    team_name: String,
-    photo_url: Option<String>,
-    price: rust_decimal::Decimal,
-    total_points: i32,
-    created_at: chrono::DateTime<chrono::Utc>,
-    assigned_position: Option<PlayerPosition>,
-}
-
 /// GET /api/leagues/:league_id/members/:user_id/lineup
 ///
 /// View a league member's starting 6 lineup. Only available when
@@ -321,67 +305,7 @@ pub async fn get_member_lineup(
     .await?
     .ok_or_else(|| AppError::NotFound("This player hasn't created a team yet".to_string()))?;
 
-    let starter_rows = sqlx::query_as::<_, LineupStarterRow>(
-        r#"SELECT p.id, p.name, p.position, p.secondary_position, p.is_top_player,
-                  p.team_name, p.photo_url, p.price, p.created_at,
-                  tp.assigned_position,
-                  COALESCE((
-                    SELECT SUM(
-                      CASE COALESCE(tp.assigned_position, p.position)::text
-                        WHEN 'GK'  THEN pp.goals * 10
-                        WHEN 'DEF' THEN pp.goals * 6
-                        WHEN 'MID' THEN pp.goals * 5
-                        WHEN 'FWD' THEN pp.goals * 4
-                        ELSE 0
-                      END
-                      + pp.assists * 5
-                      + CASE COALESCE(tp.assigned_position, p.position)::text
-                          WHEN 'GK'  THEN pp.clean_sheets * 2
-                          WHEN 'DEF' THEN pp.clean_sheets * 2
-                          ELSE 0
-                        END
-                      + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN pp.saves / 5 ELSE 0 END
-                      + pp.penalty_saves * 8
-                      + CASE WHEN pp.minutes_played >= 35 THEN 2
-                             WHEN pp.minutes_played >= 1  THEN 1
-                             ELSE 0 END
-                      - pp.own_goals * 2
-                      - pp.penalty_misses * 2
-                      - pp.regular_fouls * 1
-                      - pp.serious_fouls * 3
-                    )
-                    FROM player_points pp
-                    WHERE pp.player_id = p.id
-                  ), 0)::int AS total_points
-           FROM players p
-           INNER JOIN team_players tp ON p.id = tp.player_id
-           WHERE tp.team_id = $1 AND tp.is_bench = false"#,
-    )
-    .bind(team.id)
-    .fetch_all(&state.pool)
-    .await?;
-
-    let starters: Vec<StarterPlayer> = starter_rows
-        .into_iter()
-        .map(|r| {
-            let assigned = r.assigned_position.unwrap_or_else(|| r.position.clone());
-            StarterPlayer {
-                player: Player {
-                    id: r.id,
-                    name: r.name,
-                    position: r.position,
-                    secondary_position: r.secondary_position,
-                    is_top_player: r.is_top_player,
-                    team_name: r.team_name,
-                    photo_url: r.photo_url,
-                    price: r.price,
-                    total_points: r.total_points,
-                    created_at: r.created_at,
-                },
-                assigned_position: assigned,
-            }
-        })
-        .collect();
+    let starters = fetch_team_starters(&state.pool, team.id).await?;
 
     let username = sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
         .bind(target_user_id)
