@@ -135,6 +135,26 @@ pub fn single_starter_total(source: Source) -> String {
     )
 }
 
+/// Teams eligible to be scored for a gameweek.
+///
+/// A team qualifies if it has a lineup snapshot for that week, or if it already
+/// existed when the week ended. Without the second test, re-running an old
+/// gameweek would fall back to the live squad for managers who joined later and
+/// retroactively award them points for a week they never played. The `created_at`
+/// clause keeps teams that predate lineup snapshots scoreable.
+///
+/// Binds `$1` = match week id, `$2` = that week's end date.
+pub fn scored_teams() -> &'static str {
+    r#"SELECT ft.id,
+              tgl.id AS lineup_id,
+              COALESCE(tgl.captain_id, ft.captain_id) AS captain_id
+       FROM fantasy_teams ft
+       LEFT JOIN team_gameweek_lineups tgl
+         ON tgl.team_id = ft.id AND tgl.match_week_id = $1
+       WHERE tgl.id IS NOT NULL
+          OR ft.created_at::date <= $2"#
+}
+
 /// Season points each squad member earned *for a given team*, summed per gameweek
 /// so both the assigned role and that week's captaincy apply.
 ///
@@ -422,6 +442,96 @@ mod tests {
             breakdown, gross,
             "per-player breakdown ({breakdown}) must equal the stored gameweek total \
              ({gross}); starter base {starter_base}, captain bonus {captain_points}"
+        );
+
+        tx.rollback().await.expect("rollback");
+    }
+
+    /// Re-running an old gameweek must not hand points to managers who joined
+    /// afterwards. Without the guard they have no snapshot for that week, fall back
+    /// to the live squad, and get scored against stats they were never present for.
+    #[tokio::test]
+    async fn scoring_skips_teams_that_joined_after_the_week() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut tx = pool.begin().await.expect("begin");
+
+        let (week_id, end_date): (uuid::Uuid, chrono::NaiveDate) =
+            sqlx::query_as("SELECT id, end_date FROM match_weeks ORDER BY week_number LIMIT 1")
+                .fetch_one(&mut *tx)
+                .await
+                .expect("a match week must exist");
+
+        // `created_at` is what separates a late joiner from a team that predates
+        // lineup snapshots, so each fixture sets it explicitly.
+        async fn make_team(
+            tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+            tag: &str,
+            created_at: chrono::NaiveDate,
+        ) -> uuid::Uuid {
+            let user_id: uuid::Uuid = sqlx::query_scalar(
+                "INSERT INTO users (username, email, password_hash, full_name)
+                 VALUES ($1, $2, 'x', 'Guard Probe') RETURNING id",
+            )
+            .bind(format!("guard_{tag}"))
+            .bind(format!("guard_{tag}@example.test"))
+            .fetch_one(&mut **tx)
+            .await
+            .expect("insert user");
+
+            sqlx::query_scalar(
+                "INSERT INTO fantasy_teams (user_id, name, created_at)
+                 VALUES ($1, $2, $3::date) RETURNING id",
+            )
+            .bind(user_id)
+            .bind(format!("Guard {tag}"))
+            .bind(created_at)
+            .fetch_one(&mut **tx)
+            .await
+            .expect("insert team")
+        }
+
+        let before = end_date - chrono::Duration::days(7);
+        let after = end_date + chrono::Duration::days(7);
+
+        let snapshotted = make_team(&mut tx, "snapshotted", after).await;
+        let legacy = make_team(&mut tx, "legacy", before).await;
+        let late_joiner = make_team(&mut tx, "late", after).await;
+
+        // The snapshotted team joined late too, but played the week, so its snapshot
+        // must override the date test.
+        sqlx::query(
+            "INSERT INTO team_gameweek_lineups (team_id, match_week_id) VALUES ($1, $2)",
+        )
+        .bind(snapshotted)
+        .bind(week_id)
+        .execute(&mut *tx)
+        .await
+        .expect("insert snapshot");
+
+        let scored: Vec<uuid::Uuid> = sqlx::query_scalar(&format!(
+            "SELECT id FROM ({}) AS t",
+            scored_teams()
+        ))
+        .bind(week_id)
+        .bind(end_date)
+        .fetch_all(&mut *tx)
+        .await
+        .expect("scored teams");
+
+        assert!(
+            scored.contains(&snapshotted),
+            "a team with a snapshot for the week must be scored"
+        );
+        assert!(
+            scored.contains(&legacy),
+            "a team that predates snapshots but existed during the week must be scored"
+        );
+        assert!(
+            !scored.contains(&late_joiner),
+            "a team created after the week ended, with no snapshot, must not be scored"
         );
 
         tx.rollback().await.expect("rollback");
