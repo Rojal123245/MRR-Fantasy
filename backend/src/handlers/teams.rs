@@ -14,6 +14,7 @@ use crate::models::{
     CreateTeamRequest, FantasyTeam, FantasyTeamWithPlayers, Player, PlayerPosition,
     SetPlayersRequest, StarterPlayer, TransferRecord, TransferRequest, TransferStatusResponse,
 };
+use crate::services::points_sql;
 
 #[derive(Debug, Serialize)]
 pub struct LockStatusResponse {
@@ -125,75 +126,34 @@ pub async fn create_team(
     Ok(Json(team))
 }
 
-/// Per-player points for a team's starters, with the captain multiplier applied
-/// per gameweek (x2 as captain, x3 when Triple Captain was played that week).
-///
-/// The captain is resolved the same way scoring resolves it in
-/// `admin::submit_week_stats`: that gameweek's lineup snapshot first, falling
-/// back to the team's current captain when the snapshot has none. Takes the
-/// team id as `$1`.
-const TEAM_STARTERS_QUERY: &str = r#"
-    SELECT p.id, p.name, p.position, p.secondary_position, p.is_top_player,
-           p.team_name, p.photo_url, p.price, p.created_at,
-           tp.assigned_position,
-           COALESCE((
-             SELECT SUM(
-               (
-                 CASE COALESCE(tp.assigned_position, p.position)::text
-                   WHEN 'GK'  THEN pp.goals * 10
-                   WHEN 'DEF' THEN pp.goals * 6
-                   WHEN 'MID' THEN pp.goals * 5
-                   WHEN 'FWD' THEN pp.goals * 4
-                   ELSE 0
-                 END
-                 + pp.assists * 5
-                 + CASE COALESCE(tp.assigned_position, p.position)::text
-                     WHEN 'GK'  THEN pp.clean_sheets * 2
-                     WHEN 'DEF' THEN pp.clean_sheets * 2
-                     ELSE 0
-                   END
-                 + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN pp.saves / 5 ELSE 0 END
-                 + pp.penalty_saves * 8
-                 + CASE WHEN pp.minutes_played >= 35 THEN 2
-                        WHEN pp.minutes_played >= 1  THEN 1
-                        ELSE 0 END
-                 - pp.own_goals * 2
-                 - pp.penalty_misses * 2
-                 - pp.regular_fouls * 1
-                 - pp.serious_fouls * 3
-               ) * CASE
-                     WHEN COALESCE(tgl.captain_id, ft.captain_id) = p.id THEN
-                       CASE WHEN EXISTS (
-                         SELECT 1 FROM team_chips tc
-                         WHERE tc.team_id = ft.id
-                           AND tc.match_week_id = pp.match_week_id
-                           AND tc.chip_type = 'triple_captain'
-                       ) THEN 3 ELSE 2 END
-                     ELSE 1
-                   END
-             )
-             FROM player_points pp
-             LEFT JOIN team_gameweek_lineups tgl
-               ON tgl.team_id = ft.id AND tgl.match_week_id = pp.match_week_id
-             WHERE pp.player_id = p.id
-           ), 0)::int AS total_points
-    FROM players p
-    INNER JOIN team_players tp ON p.id = tp.player_id
-    INNER JOIN fantasy_teams ft ON ft.id = tp.team_id
-    WHERE tp.team_id = $1 AND tp.is_bench = false
-"#;
-
-/// Fetch a team's 6 starters with captain-multiplied points.
+/// Fetch a team's 6 starters with the points they earned for that team.
 pub async fn fetch_team_starters(
     pool: &sqlx::PgPool,
     team_id: Uuid,
 ) -> Result<Vec<StarterPlayer>, AppError> {
-    let rows = sqlx::query_as::<_, StarterRow>(TEAM_STARTERS_QUERY)
+    let rows = sqlx::query_as::<_, StarterRow>(&points_sql::squad_season_points(false))
         .bind(team_id)
         .fetch_all(pool)
         .await?;
 
     Ok(rows.into_iter().map(|r| r.into_starter_player()).collect())
+}
+
+/// Fetch a team's 3 bench players. Points reflect the role their manager assigned,
+/// and only ever counted towards a total in a Bench Boost week.
+pub async fn fetch_team_bench(
+    pool: &sqlx::PgPool,
+    team_id: Uuid,
+) -> Result<Vec<Player>, AppError> {
+    let rows = sqlx::query_as::<_, StarterRow>(&points_sql::squad_season_points(true))
+        .bind(team_id)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| r.into_starter_player().player)
+        .collect())
 }
 
 /// Row type for starter queries that includes the assigned position.
@@ -243,17 +203,7 @@ async fn build_team_response(
     team: &FantasyTeam,
 ) -> Result<FantasyTeamWithPlayers, AppError> {
     let starters = fetch_team_starters(pool, team.id).await?;
-
-    let bench = sqlx::query_as::<_, Player>(
-        r#"SELECT p.id, p.name, p.position, p.secondary_position, p.is_top_player,
-                  p.team_name, p.photo_url, p.price, p.total_points, p.created_at
-           FROM players p
-           INNER JOIN team_players tp ON p.id = tp.player_id
-           WHERE tp.team_id = $1 AND tp.is_bench = true"#,
-    )
-    .bind(team.id)
-    .fetch_all(pool)
-    .await?;
+    let bench = fetch_team_bench(pool, team.id).await?;
 
     let total_points = team_total_points(pool, team.id).await?;
 
@@ -667,17 +617,7 @@ pub async fn get_team_points(
     .ok_or_else(|| AppError::NotFound("Team not found".to_string()))?;
 
     let starters = fetch_team_starters(&state.pool, team_id).await?;
-
-    let bench = sqlx::query_as::<_, Player>(
-        r#"SELECT p.id, p.name, p.position, p.secondary_position, p.is_top_player,
-                  p.team_name, p.photo_url, p.price, p.total_points, p.created_at
-           FROM players p
-           INNER JOIN team_players tp ON p.id = tp.player_id
-           WHERE tp.team_id = $1 AND tp.is_bench = true"#,
-    )
-    .bind(team_id)
-    .fetch_all(&state.pool)
-    .await?;
+    let bench = fetch_team_bench(&state.pool, team_id).await?;
 
     let total = team_total_points(&state.pool, team_id).await?;
 
