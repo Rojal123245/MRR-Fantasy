@@ -12,6 +12,7 @@ use crate::handlers::teams::compute_lock_status;
 use crate::models::PlayerPosition;
 use crate::models::{AdminPlayerStats, CreateGameweekRequest, MatchWeek, PlayerStatInput};
 use crate::services::points_engine::PointsEngine;
+use crate::services::points_sql;
 
 #[derive(sqlx::FromRow)]
 struct TeamLineupSnapshotSource {
@@ -463,77 +464,18 @@ pub async fn submit_week_stats(
     .await?;
 
     for team in teams {
-        let starter_base = if let Some(lineup_id) = team.lineup_id {
-            sqlx::query_scalar::<_, i64>(
-                r#"SELECT COALESCE(SUM(
-                     CASE COALESCE(tglp.assigned_position, p.position)::text
-                       WHEN 'GK'  THEN COALESCE(pp.goals, 0) * 10
-                       WHEN 'DEF' THEN COALESCE(pp.goals, 0) * 6
-                       WHEN 'MID' THEN COALESCE(pp.goals, 0) * 5
-                       WHEN 'FWD' THEN COALESCE(pp.goals, 0) * 4
-                       ELSE 0
-                     END
-                     + COALESCE(pp.assists, 0) * 5
-                     + CASE COALESCE(tglp.assigned_position, p.position)::text
-                         WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
-                         WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
-                         ELSE 0
-                       END
-                     + CASE WHEN COALESCE(tglp.assigned_position, p.position)::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
-                     + COALESCE(pp.penalty_saves, 0) * 8
-                     + CASE WHEN COALESCE(pp.minutes_played, 0) >= 35 THEN 2
-                            WHEN COALESCE(pp.minutes_played, 0) >= 1  THEN 1
-                            ELSE 0 END
-                     - COALESCE(pp.own_goals, 0) * 2
-                     - COALESCE(pp.penalty_misses, 0) * 2
-                     - COALESCE(pp.regular_fouls, 0) * 1
-                     - COALESCE(pp.serious_fouls, 0) * 3
-                   ), 0)
-                   FROM team_gameweek_lineup_players tglp
-                   JOIN players p ON p.id = tglp.player_id
-                   LEFT JOIN player_points pp ON pp.player_id = tglp.player_id AND pp.match_week_id = $2
-                   WHERE tglp.team_gameweek_lineup_id = $1 AND tglp.is_bench = false"#,
-            )
-            .bind(lineup_id)
-            .bind(week.id)
-            .fetch_one(&mut *tx)
-            .await?
-        } else {
-            sqlx::query_scalar::<_, i64>(
-                r#"SELECT COALESCE(SUM(
-                     CASE COALESCE(tp.assigned_position, p.position)::text
-                       WHEN 'GK'  THEN COALESCE(pp.goals, 0) * 10
-                       WHEN 'DEF' THEN COALESCE(pp.goals, 0) * 6
-                       WHEN 'MID' THEN COALESCE(pp.goals, 0) * 5
-                       WHEN 'FWD' THEN COALESCE(pp.goals, 0) * 4
-                       ELSE 0
-                     END
-                     + COALESCE(pp.assists, 0) * 5
-                     + CASE COALESCE(tp.assigned_position, p.position)::text
-                         WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
-                         WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
-                         ELSE 0
-                       END
-                     + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
-                     + COALESCE(pp.penalty_saves, 0) * 8
-                     + CASE WHEN COALESCE(pp.minutes_played, 0) >= 35 THEN 2
-                            WHEN COALESCE(pp.minutes_played, 0) >= 1  THEN 1
-                            ELSE 0 END
-                     - COALESCE(pp.own_goals, 0) * 2
-                     - COALESCE(pp.penalty_misses, 0) * 2
-                     - COALESCE(pp.regular_fouls, 0) * 1
-                     - COALESCE(pp.serious_fouls, 0) * 3
-                   ), 0)
-                   FROM team_players tp
-                   JOIN players p ON p.id = tp.player_id
-                   LEFT JOIN player_points pp ON pp.player_id = tp.player_id AND pp.match_week_id = $2
-                   WHERE tp.team_id = $1 AND tp.is_bench = false"#,
-            )
-            .bind(team.id)
-            .bind(week.id)
-            .fetch_one(&mut *tx)
-            .await?
+        // A snapshot, once taken, is the source of truth for that week so later
+        // transfers cannot change an already-scored gameweek.
+        let (source, source_id) = match team.lineup_id {
+            Some(lineup_id) => (points_sql::Source::Snapshot, lineup_id),
+            None => (points_sql::Source::LiveSquad, team.id),
         };
+
+        let starter_base = sqlx::query_scalar::<_, i64>(&points_sql::squad_half_total(source, false))
+            .bind(source_id)
+            .bind(week.id)
+            .fetch_one(&mut *tx)
+            .await?;
 
         let triple_captain_active = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM team_chips WHERE team_id = $1 AND match_week_id = $2 AND chip_type = 'triple_captain'",
@@ -553,85 +495,17 @@ pub async fn submit_week_stats(
         .await?
             > 0;
 
+        // The captain is already counted once in `starter_base`, so adding his score
+        // again makes 2x, and twice again makes 3x under Triple Captain.
         let captain_bonus = if let Some(captain_id) = team.captain_id {
-            let captain_points = if let Some(lineup_id) = team.lineup_id {
-                sqlx::query_scalar::<_, i32>(
-                    r#"SELECT COALESCE((
-                         CASE COALESCE(tglp.assigned_position, p.position)::text
-                           WHEN 'GK'  THEN COALESCE(pp.goals, 0) * 10
-                           WHEN 'DEF' THEN COALESCE(pp.goals, 0) * 6
-                           WHEN 'MID' THEN COALESCE(pp.goals, 0) * 5
-                           WHEN 'FWD' THEN COALESCE(pp.goals, 0) * 4
-                           ELSE 0
-                         END
-                         + COALESCE(pp.assists, 0) * 5
-                         + CASE COALESCE(tglp.assigned_position, p.position)::text
-                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
-                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
-                             ELSE 0
-                           END
-                         + CASE WHEN COALESCE(tglp.assigned_position, p.position)::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
-                         + COALESCE(pp.penalty_saves, 0) * 8
-                         + CASE WHEN COALESCE(pp.minutes_played, 0) >= 35 THEN 2
-                                WHEN COALESCE(pp.minutes_played, 0) >= 1  THEN 1
-                                ELSE 0 END
-                         - COALESCE(pp.own_goals, 0) * 2
-                         - COALESCE(pp.penalty_misses, 0) * 2
-                         - COALESCE(pp.regular_fouls, 0) * 1
-                         - COALESCE(pp.serious_fouls, 0) * 3
-                       ), 0)
-                       FROM team_gameweek_lineup_players tglp
-                       JOIN players p ON p.id = tglp.player_id
-                       LEFT JOIN player_points pp ON pp.player_id = tglp.player_id AND pp.match_week_id = $2
-                       WHERE tglp.team_gameweek_lineup_id = $1
-                         AND tglp.player_id = $3
-                         AND tglp.is_bench = false"#,
-                )
-                .bind(lineup_id)
-                .bind(week.id)
-                .bind(captain_id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .unwrap_or(0)
-            } else {
-                sqlx::query_scalar::<_, i32>(
-                    r#"SELECT COALESCE((
-                         CASE COALESCE(tp.assigned_position, p.position)::text
-                           WHEN 'GK'  THEN COALESCE(pp.goals, 0) * 10
-                           WHEN 'DEF' THEN COALESCE(pp.goals, 0) * 6
-                           WHEN 'MID' THEN COALESCE(pp.goals, 0) * 5
-                           WHEN 'FWD' THEN COALESCE(pp.goals, 0) * 4
-                           ELSE 0
-                         END
-                         + COALESCE(pp.assists, 0) * 5
-                         + CASE COALESCE(tp.assigned_position, p.position)::text
-                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
-                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
-                             ELSE 0
-                           END
-                         + CASE WHEN COALESCE(tp.assigned_position, p.position)::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
-                         + COALESCE(pp.penalty_saves, 0) * 8
-                         + CASE WHEN COALESCE(pp.minutes_played, 0) >= 35 THEN 2
-                                WHEN COALESCE(pp.minutes_played, 0) >= 1  THEN 1
-                                ELSE 0 END
-                         - COALESCE(pp.own_goals, 0) * 2
-                         - COALESCE(pp.penalty_misses, 0) * 2
-                         - COALESCE(pp.regular_fouls, 0) * 1
-                         - COALESCE(pp.serious_fouls, 0) * 3
-                       ), 0)
-                       FROM fantasy_teams ft
-                       JOIN team_players tp ON tp.team_id = ft.id AND tp.player_id = ft.captain_id AND tp.is_bench = false
-                       JOIN players p ON p.id = tp.player_id
-                       LEFT JOIN player_points pp ON pp.player_id = tp.player_id AND pp.match_week_id = $2
-                       WHERE ft.id = $1 AND ft.captain_id = $3"#,
-                )
-                .bind(team.id)
-                .bind(week.id)
-                .bind(captain_id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .unwrap_or(0)
-            };
+            let captain_points =
+                sqlx::query_scalar::<_, i32>(&points_sql::single_starter_total(source))
+                    .bind(source_id)
+                    .bind(week.id)
+                    .bind(captain_id)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .unwrap_or(0);
 
             if triple_captain_active {
                 (captain_points * 2) as i64
@@ -643,77 +517,11 @@ pub async fn submit_week_stats(
         };
 
         let bench_bonus = if bench_boost_active {
-            if let Some(lineup_id) = team.lineup_id {
-                sqlx::query_scalar::<_, i64>(
-                    r#"SELECT COALESCE(SUM(
-                         CASE p.position::text
-                           WHEN 'GK'  THEN COALESCE(pp.goals, 0) * 10
-                           WHEN 'DEF' THEN COALESCE(pp.goals, 0) * 6
-                           WHEN 'MID' THEN COALESCE(pp.goals, 0) * 5
-                           WHEN 'FWD' THEN COALESCE(pp.goals, 0) * 4
-                           ELSE 0
-                         END
-                         + COALESCE(pp.assists, 0) * 5
-                         + CASE p.position::text
-                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
-                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
-                             ELSE 0
-                           END
-                         + CASE WHEN p.position::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
-                         + COALESCE(pp.penalty_saves, 0) * 8
-                         + CASE WHEN COALESCE(pp.minutes_played, 0) >= 35 THEN 2
-                                WHEN COALESCE(pp.minutes_played, 0) >= 1  THEN 1
-                                ELSE 0 END
-                         - COALESCE(pp.own_goals, 0) * 2
-                         - COALESCE(pp.penalty_misses, 0) * 2
-                         - COALESCE(pp.regular_fouls, 0) * 1
-                         - COALESCE(pp.serious_fouls, 0) * 3
-                       ), 0)
-                       FROM team_gameweek_lineup_players tglp
-                       JOIN players p ON p.id = tglp.player_id
-                       LEFT JOIN player_points pp ON pp.player_id = tglp.player_id AND pp.match_week_id = $2
-                       WHERE tglp.team_gameweek_lineup_id = $1 AND tglp.is_bench = true"#,
-                )
-                .bind(lineup_id)
+            sqlx::query_scalar::<_, i64>(&points_sql::squad_half_total(source, true))
+                .bind(source_id)
                 .bind(week.id)
                 .fetch_one(&mut *tx)
                 .await?
-            } else {
-                sqlx::query_scalar::<_, i64>(
-                    r#"SELECT COALESCE(SUM(
-                         CASE p.position::text
-                           WHEN 'GK'  THEN COALESCE(pp.goals, 0) * 10
-                           WHEN 'DEF' THEN COALESCE(pp.goals, 0) * 6
-                           WHEN 'MID' THEN COALESCE(pp.goals, 0) * 5
-                           WHEN 'FWD' THEN COALESCE(pp.goals, 0) * 4
-                           ELSE 0
-                         END
-                         + COALESCE(pp.assists, 0) * 5
-                         + CASE p.position::text
-                             WHEN 'GK'  THEN COALESCE(pp.clean_sheets, 0) * 2
-                             WHEN 'DEF' THEN COALESCE(pp.clean_sheets, 0) * 2
-                             ELSE 0
-                           END
-                         + CASE WHEN p.position::text = 'GK' THEN COALESCE(pp.saves, 0) / 5 ELSE 0 END
-                         + COALESCE(pp.penalty_saves, 0) * 8
-                         + CASE WHEN COALESCE(pp.minutes_played, 0) >= 35 THEN 2
-                                WHEN COALESCE(pp.minutes_played, 0) >= 1  THEN 1
-                                ELSE 0 END
-                         - COALESCE(pp.own_goals, 0) * 2
-                         - COALESCE(pp.penalty_misses, 0) * 2
-                         - COALESCE(pp.regular_fouls, 0) * 1
-                         - COALESCE(pp.serious_fouls, 0) * 3
-                       ), 0)
-                       FROM team_players tp
-                       JOIN players p ON p.id = tp.player_id
-                       LEFT JOIN player_points pp ON pp.player_id = tp.player_id AND pp.match_week_id = $2
-                       WHERE tp.team_id = $1 AND tp.is_bench = true"#,
-                )
-                .bind(team.id)
-                .bind(week.id)
-                .fetch_one(&mut *tx)
-                .await?
-            }
         } else {
             0
         };
