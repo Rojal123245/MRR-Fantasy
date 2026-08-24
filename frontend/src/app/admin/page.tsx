@@ -235,17 +235,12 @@ export default function AdminPage() {
     }
   };
 
-  const grouped = players.reduce<Record<string, AdminPlayerStats[]>>(
-    (acc, p) => {
-      const pos = p.position;
-      if (!acc[pos]) acc[pos] = [];
-      acc[pos].push(p);
-      return acc;
-    },
-    {}
+  // One flat list in name order. Stats are read off a sheet ordered by name, so
+  // grouping by position made the admin hunt for every row; the position is kept
+  // as a badge on the row instead.
+  const sortedPlayers = [...players].sort((a, b) =>
+    a.player_name.localeCompare(b.player_name)
   );
-
-  const posOrder = ["GK", "DEF", "MID", "FWD"];
 
   return (
     <div className="min-h-screen pitch-pattern">
@@ -296,7 +291,7 @@ export default function AdminPage() {
             </h3>
           </div>
           <p className="text-xs mb-4" style={{ color: "var(--text-muted)", fontFamily: "var(--font-body)" }}>
-            Use this only if you need to reopen transfers/lineups during the scheduled lock window (Sat 10:00 PM – Sun 12:00 PM ET).
+            Use this only if you need to reopen transfers/lineups during the scheduled lock window (Sun 12:00 AM – 12:00 PM ET).
           </p>
           <div className="flex items-center justify-between p-3 rounded-xl" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border-color)" }}>
             <div>
@@ -534,125 +529,95 @@ export default function AdminPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            {posOrder.map((pos) => {
-              const group = grouped[pos];
-              if (!group || group.length === 0) return null;
-              return (
-                <motion.div
-                  key={pos}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="rounded-2xl overflow-hidden"
-                  style={{
-                    background: "var(--bg-card)",
-                    border: "1px solid var(--border-color)",
-                  }}
-                >
-                  {/* Position header */}
-                  <div
-                    className="px-5 py-3 flex items-center gap-2"
-                    style={{
-                      background: `${POS_COLORS[pos]}10`,
-                      borderBottom: `1px solid ${POS_COLORS[pos]}20`,
-                    }}
-                  >
-                    <div
-                      className="w-2 h-2 rounded-full"
-                      style={{ background: POS_COLORS[pos] }}
-                    />
-                    <span
-                      className="text-sm font-bold tracking-wider"
-                      style={{
-                        color: POS_COLORS[pos],
-                        fontFamily: "var(--font-display)",
-                      }}
-                    >
-                      {pos === "GK"
-                        ? "GOALKEEPERS"
-                        : pos === "DEF"
-                          ? "DEFENDERS"
-                          : pos === "MID"
-                            ? "MIDFIELDERS"
-                            : "FORWARDS"}
-                    </span>
-                  </div>
-
-                  {/* Table */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full" style={{ fontFamily: "var(--font-body)" }}>
-                      <thead>
-                        <tr
-                          style={{
-                            borderBottom: "1px solid var(--border-color)",
-                          }}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="rounded-2xl overflow-hidden"
+              style={{
+                background: "var(--bg-card)",
+                border: "1px solid var(--border-color)",
+              }}
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full" style={{ fontFamily: "var(--font-body)" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
+                      <th
+                        className="text-left px-4 py-3 text-xs font-semibold tracking-wider"
+                        style={{ color: "var(--text-muted)", minWidth: 200 }}
+                      >
+                        PLAYER
+                      </th>
+                      {STAT_FIELDS.map((f) => (
+                        <th
+                          key={f.key}
+                          className="px-2 py-3 text-center text-xs font-semibold tracking-wider"
+                          style={{ color: "var(--text-muted)", minWidth: 52 }}
+                          title={f.title}
                         >
-                          <th
-                            className="text-left px-4 py-3 text-xs font-semibold tracking-wider"
-                            style={{ color: "var(--text-muted)", minWidth: 160 }}
-                          >
-                            PLAYER
-                          </th>
-                          {STAT_FIELDS.map((f) => (
-                            <th
-                              key={f.key}
-                              className="px-2 py-3 text-center text-xs font-semibold tracking-wider"
-                              style={{ color: "var(--text-muted)", minWidth: 52 }}
-                              title={f.title}
+                          {f.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedPlayers.map((player) => (
+                      <tr
+                        key={player.player_id}
+                        style={{ borderBottom: "1px solid var(--border-color)" }}
+                        className="hover:bg-white/2 transition-colors"
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 w-9 text-center"
+                              style={{
+                                color: POS_COLORS[player.position],
+                                background: `${POS_COLORS[player.position]}18`,
+                                border: `1px solid ${POS_COLORS[player.position]}30`,
+                                fontFamily: "var(--font-display)",
+                              }}
                             >
-                              {f.label}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {group.map((player) => (
-                          <tr
-                            key={player.player_id}
-                            style={{
-                              borderBottom: "1px solid var(--border-color)",
-                            }}
-                            className="hover:bg-white/2 transition-colors"
-                          >
-                            <td className="px-4 py-3">
-                              <span
-                                className="text-sm font-medium"
-                                style={{ color: "var(--text-primary)" }}
-                              >
-                                {player.player_name}
-                              </span>
-                            </td>
-                            {STAT_FIELDS.map((f) => (
-                              <td key={f.key} className="px-1 py-2 text-center">
-                                <input
-                                  type="number"
-                                  min={0}
-                                  value={edits[player.player_id]?.[f.key] ?? 0}
-                                  onChange={(e) =>
-                                    updateStat(
-                                      player.player_id,
-                                      f.key,
-                                      parseInt(e.target.value) || 0
-                                    )
-                                  }
-                                  className="w-12 text-center text-sm py-1.5 rounded-lg border-none outline-none focus:ring-1"
-                                  style={{
-                                    background: "var(--bg-elevated)",
-                                    color: "var(--text-primary)",
-                                    fontFamily: "var(--font-body)",
-                                    // @ts-expect-error CSS custom property
-                                    "--tw-ring-color": "var(--accent-green)",
-                                  }}
-                                />
-                              </td>
-                            ))}
-                          </tr>
+                              {player.position}
+                            </span>
+                            <span
+                              className="text-sm font-medium"
+                              style={{ color: "var(--text-primary)" }}
+                            >
+                              {player.player_name}
+                            </span>
+                          </div>
+                        </td>
+                        {STAT_FIELDS.map((f) => (
+                          <td key={f.key} className="px-1 py-2 text-center">
+                            <input
+                              type="number"
+                              min={0}
+                              value={edits[player.player_id]?.[f.key] ?? 0}
+                              onChange={(e) =>
+                                updateStat(
+                                  player.player_id,
+                                  f.key,
+                                  parseInt(e.target.value) || 0
+                                )
+                              }
+                              className="w-12 text-center text-sm py-1.5 rounded-lg border-none outline-none focus:ring-1"
+                              style={{
+                                background: "var(--bg-elevated)",
+                                color: "var(--text-primary)",
+                                fontFamily: "var(--font-body)",
+                                // @ts-expect-error CSS custom property
+                                "--tw-ring-color": "var(--accent-green)",
+                              }}
+                            />
+                          </td>
                         ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </motion.div>
-              );
-            })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
           </div>
         )}
       </div>

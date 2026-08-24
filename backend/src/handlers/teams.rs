@@ -15,6 +15,7 @@ use crate::models::{
     SetPlayersRequest, StarterPlayer, TransferRecord, TransferRequest, TransferStatusResponse,
 };
 use crate::services::points_sql;
+use crate::services::scoring;
 
 #[derive(Debug, Serialize)]
 pub struct LockStatusResponse {
@@ -24,33 +25,48 @@ pub struct LockStatusResponse {
     pub active_gameweek: Option<i32>,
 }
 
-fn scheduled_lock_status() -> (bool, Option<String>) {
-    let now_et = Utc::now().with_timezone(&New_York);
-    let weekday = now_et.weekday();
+/// The lock window, evaluated against a given Eastern-time instant.
+///
+/// The deadline is the end of Saturday: teams are locked for the whole of Sunday
+/// morning and reopen at noon. Saturday itself needs no clause — the rule is now
+/// entirely "is it Sunday morning".
+///
+/// Deliberately expressed in wall-clock Eastern time, so the window is midnight
+/// to noon as managers read a clock. On the two Sundays a year the clocks move
+/// that makes the window 11 or 13 real hours; the alternative would shift the
+/// deadline by an hour twice a season, which is worse.
+fn scheduled_lock_status_at(now_et: chrono::DateTime<chrono_tz::Tz>) -> (bool, Option<String>) {
+    let locked = matches!(now_et.weekday(), chrono::Weekday::Sun) && now_et.hour() < 12;
 
-    // Locked from Saturday 10:00 PM ET through Sunday before 12:00 PM ET.
-    let locked = (matches!(weekday, chrono::Weekday::Sat) && now_et.hour() >= 22)
-        || (matches!(weekday, chrono::Weekday::Sun) && now_et.hour() < 12);
-
+    // Only Sunday morning is ever locked, so the unlock is always noon today.
     let unlock_at = if locked {
-        let unlock_date = if matches!(weekday, chrono::Weekday::Sat) {
-            (now_et + chrono::Duration::days(1)).date_naive()
-        } else {
-            now_et.date_naive()
-        };
-        unlock_date
+        now_et
+            .date_naive()
             .and_hms_opt(12, 0, 0)
-            .map(|dt| {
-                dt.and_local_timezone(New_York)
-                    .single()
-                    .map(|t| t.to_rfc3339())
-            })
-            .flatten()
+            .and_then(|dt| dt.and_local_timezone(New_York).single())
+            .map(|t| t.to_rfc3339())
     } else {
         None
     };
 
     (locked, unlock_at)
+}
+
+fn scheduled_lock_status() -> (bool, Option<String>) {
+    scheduled_lock_status_at(Utc::now().with_timezone(&New_York))
+}
+
+/// The schedule with the admin override applied.
+///
+/// `force_unlock` in `lineup_lock_control` always wins, so an admin can reopen
+/// team selection mid-window without waiting for noon.
+fn effective_lock(
+    scheduled: (bool, Option<String>),
+    manually_unlocked: bool,
+) -> (bool, Option<String>) {
+    let (scheduled_locked, unlock_at) = scheduled;
+    let locked = scheduled_locked && !manually_unlocked;
+    (locked, if locked { unlock_at } else { None })
 }
 
 pub async fn compute_lock_status(pool: &sqlx::PgPool) -> AppResult<LockStatusResponse> {
@@ -67,9 +83,7 @@ pub async fn compute_lock_status(pool: &sqlx::PgPool) -> AppResult<LockStatusRes
     .fetch_optional(pool)
     .await?;
 
-    let (scheduled_locked, scheduled_unlock_at) = scheduled_lock_status();
-    let locked = scheduled_locked && !manually_unlocked;
-    let unlock_at = if locked { scheduled_unlock_at } else { None };
+    let (locked, unlock_at) = effective_lock(scheduled_lock_status(), manually_unlocked);
 
     Ok(LockStatusResponse {
         locked,
@@ -237,42 +251,7 @@ async fn snapshot_team_lineup_if_missing(
     match_week_id: Uuid,
 ) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
-
-    let captain_id = sqlx::query_scalar::<_, Option<Uuid>>(
-        "SELECT captain_id FROM fantasy_teams WHERE id = $1",
-    )
-    .bind(team_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .flatten();
-
-    // Keep first snapshot immutable for a team+week.
-    let lineup_id = sqlx::query_scalar::<_, Uuid>(
-        r#"INSERT INTO team_gameweek_lineups (team_id, match_week_id, captain_id)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (team_id, match_week_id) DO UPDATE
-             SET captain_id = team_gameweek_lineups.captain_id
-           RETURNING id"#,
-    )
-    .bind(team_id)
-    .bind(match_week_id)
-    .bind(captain_id)
-    .fetch_one(&mut *tx)
-    .await?;
-
-    sqlx::query(
-        r#"INSERT INTO team_gameweek_lineup_players
-             (team_gameweek_lineup_id, player_id, is_bench, assigned_position)
-           SELECT $1, tp.player_id, tp.is_bench, tp.assigned_position
-           FROM team_players tp
-           WHERE tp.team_id = $2
-           ON CONFLICT (team_gameweek_lineup_id, player_id) DO NOTHING"#,
-    )
-    .bind(lineup_id)
-    .bind(team_id)
-    .execute(&mut *tx)
-    .await?;
-
+    scoring::snapshot_team_lineup(&mut tx, team_id, match_week_id).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -317,7 +296,7 @@ pub async fn set_team_players(
     let lock = compute_lock_status(&state.pool).await?;
     if lock.locked {
         return Err(AppError::BadRequest(
-            "Lineup changes are locked from Saturday 10:00 PM ET to Sunday 12:00 PM ET".to_string(),
+            "Team selection closes at the end of Saturday. Lineups are locked until Sunday 12:00 PM ET.".to_string(),
         ));
     }
 
@@ -407,6 +386,15 @@ pub async fn set_team_players(
     .await?;
 
     if let Some(week_id) = active_week_id {
+        let mut conn = state.pool.acquire().await?;
+        if scoring::week_already_scored(&mut conn, week_id).await? {
+            return Err(AppError::BadRequest(
+                "That gameweek has already been scored and is closed. Lineup changes \
+                 will apply from the next gameweek."
+                    .to_string(),
+            ));
+        }
+        drop(conn);
         snapshot_team_lineup_if_missing(&state.pool, team_id, week_id).await?;
     }
 
@@ -736,7 +724,7 @@ pub async fn transfer_player(
     let lock = compute_lock_status(&state.pool).await?;
     if lock.locked {
         return Err(AppError::BadRequest(
-            "Transfers are locked from Saturday 10:00 PM ET to Sunday 12:00 PM ET".to_string(),
+            "Transfers close at the end of Saturday. They reopen Sunday 12:00 PM ET.".to_string(),
         ));
     }
 
@@ -766,6 +754,16 @@ pub async fn transfer_player(
             "No active gameweek. Transfers are only available during a gameweek.".to_string(),
         )
     })?;
+
+    let mut conn = state.pool.acquire().await?;
+    if scoring::week_already_scored(&mut conn, active_week.id).await? {
+        return Err(AppError::BadRequest(
+            "That gameweek has already been scored and is closed. Transfers will be \
+             available again when the next gameweek opens."
+                .to_string(),
+        ));
+    }
+    drop(conn);
 
     snapshot_team_lineup_if_missing(&state.pool, team_id, active_week.id).await?;
 
@@ -977,4 +975,142 @@ pub async fn transfer_player(
 
     let response = build_team_response(&state.pool, &updated_team).await?;
     Ok(Json(response))
+}
+
+#[cfg(test)]
+mod lock_schedule_tests {
+    use super::*;
+    use chrono::offset::Offset;
+    use chrono::NaiveDate;
+
+    /// A wall-clock Eastern instant. `earliest` resolves the hour that repeats
+    /// when the clocks go back; times that do not exist are never constructed.
+    fn et(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<chrono_tz::Tz> {
+        NaiveDate::from_ymd_opt(y, m, d)
+            .expect("valid date")
+            .and_hms_opt(h, min, 0)
+            .expect("valid time")
+            .and_local_timezone(New_York)
+            .earliest()
+            .expect("a real Eastern instant")
+    }
+
+    fn locked_at(t: chrono::DateTime<chrono_tz::Tz>) -> bool {
+        scheduled_lock_status_at(t).0
+    }
+
+    /// The deadline is the end of Saturday. These four instants are the rule.
+    ///
+    /// 2026-08-22 is a Saturday, 2026-08-23 the Sunday after it.
+    #[test]
+    fn the_deadline_is_the_end_of_saturday() {
+        assert!(
+            !locked_at(et(2026, 8, 22, 23, 59)),
+            "Saturday 23:59 ET is still open — the deadline has not passed"
+        );
+        assert!(
+            locked_at(et(2026, 8, 23, 0, 0)),
+            "Sunday 00:00 ET is locked — the deadline has just passed"
+        );
+        assert!(
+            locked_at(et(2026, 8, 23, 11, 59)),
+            "Sunday 11:59 ET is still locked"
+        );
+        assert!(
+            !locked_at(et(2026, 8, 23, 12, 0)),
+            "Sunday 12:00 ET reopens"
+        );
+    }
+
+    /// Saturday used to lock from 22:00. Nothing on Saturday locks any more.
+    #[test]
+    fn saturday_evening_is_no_longer_locked() {
+        for hour in [21, 22, 23] {
+            assert!(
+                !locked_at(et(2026, 8, 22, hour, 0)),
+                "Saturday {hour}:00 ET must be open under the new deadline"
+            );
+        }
+    }
+
+    /// Every other day is open all day.
+    #[test]
+    fn the_rest_of_the_week_is_open() {
+        // Monday 2026-08-24 through Friday 2026-08-28.
+        for day in 24..=28 {
+            for hour in [0, 6, 12, 23] {
+                assert!(
+                    !locked_at(et(2026, 8, day, hour, 0)),
+                    "2026-08-{day} {hour}:00 ET must be open"
+                );
+            }
+        }
+    }
+
+    /// The window is midnight to noon on the clock, including the Sunday the
+    /// clocks jump forward — when 02:00 to 02:59 does not exist at all.
+    ///
+    /// 2026-03-08 is the second Sunday in March: EST becomes EDT at 02:00.
+    #[test]
+    fn spring_forward_sunday_still_locks_midnight_to_noon() {
+        assert!(locked_at(et(2026, 3, 8, 0, 0)), "midnight, still EST");
+        assert!(locked_at(et(2026, 3, 8, 1, 59)), "last minute before the jump");
+        assert!(locked_at(et(2026, 3, 8, 3, 0)), "first hour after the jump, now EDT");
+        assert!(locked_at(et(2026, 3, 8, 11, 59)));
+        assert!(!locked_at(et(2026, 3, 8, 12, 0)), "noon EDT reopens");
+
+        // The offset either side of the jump really did change, so this is a
+        // genuine DST case and not a fixed -05:00 masquerading as one.
+        assert_eq!(et(2026, 3, 8, 1, 59).offset().fix().to_string(), "-05:00");
+        assert_eq!(et(2026, 3, 8, 3, 0).offset().fix().to_string(), "-04:00");
+
+        // And the unlock instant is noon EDT, not noon EST.
+        let (_, unlock_at) = scheduled_lock_status_at(et(2026, 3, 8, 3, 0));
+        assert_eq!(unlock_at.as_deref(), Some("2026-03-08T12:00:00-04:00"));
+    }
+
+    /// And the Sunday the clocks go back, when 01:00 to 01:59 happens twice.
+    ///
+    /// 2026-11-01 is the first Sunday in November: EDT becomes EST at 02:00.
+    #[test]
+    fn fall_back_sunday_still_locks_midnight_to_noon() {
+        let repeated = NaiveDate::from_ymd_opt(2026, 11, 1)
+            .unwrap()
+            .and_hms_opt(1, 30, 0)
+            .unwrap();
+        let first_pass = repeated.and_local_timezone(New_York).earliest().unwrap();
+        let second_pass = repeated.and_local_timezone(New_York).latest().unwrap();
+        assert_ne!(first_pass, second_pass, "01:30 really does happen twice");
+
+        assert!(locked_at(first_pass), "01:30 EDT is locked");
+        assert!(locked_at(second_pass), "01:30 EST, an hour later, still locked");
+        assert!(locked_at(et(2026, 11, 1, 11, 59)));
+        assert!(!locked_at(et(2026, 11, 1, 12, 0)), "noon EST reopens");
+
+        let (_, unlock_at) = scheduled_lock_status_at(second_pass);
+        assert_eq!(unlock_at.as_deref(), Some("2026-11-01T12:00:00-05:00"));
+    }
+
+    /// The timezone must be the DST-aware zone, not a fixed -05:00. If it were
+    /// fixed, the deadline would drift by an hour for eight months of the year.
+    #[test]
+    fn eastern_time_is_dst_aware() {
+        assert_eq!(et(2026, 1, 15, 12, 0).offset().fix().to_string(), "-05:00", "winter is EST");
+        assert_eq!(et(2026, 7, 15, 12, 0).offset().fix().to_string(), "-04:00", "summer is EDT");
+    }
+
+    /// An admin can reopen team selection mid-window, and that still wins.
+    #[test]
+    fn force_unlock_overrides_the_schedule() {
+        let sunday_morning = scheduled_lock_status_at(et(2026, 8, 23, 9, 0));
+        assert!(sunday_morning.0, "the schedule says locked");
+
+        let (locked, unlock_at) = effective_lock(sunday_morning.clone(), true);
+        assert!(!locked, "force_unlock must reopen it");
+        assert_eq!(unlock_at, None, "and there is nothing to count down to");
+
+        let (locked, unlock_at) = effective_lock(sunday_morning, false);
+        assert!(locked, "without the override the schedule stands");
+        assert!(unlock_at.is_some(), "and it says when it reopens");
+    }
 }
