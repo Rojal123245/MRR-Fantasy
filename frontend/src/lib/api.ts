@@ -8,6 +8,26 @@ interface FetchOptions {
   token?: string;
 }
 
+/**
+ * A failed request, carrying the status so callers can tell an expired session
+ * from a rejected one. Without it every failure is just a string, and the only
+ * way to react to a 401 is to match on its text.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+
+  /** The session is gone or no longer valid; the user has to sign in again. */
+  get isExpiredSession() {
+    return this.status === 401;
+  }
+}
+
 async function apiFetch<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
   const { method = "GET", body, token } = options;
 
@@ -37,10 +57,11 @@ async function apiFetch<T>(endpoint: string, options: FetchOptions = {}): Promis
         ? (payload as { error?: unknown }).error
         : undefined;
 
-    throw new Error(
+    throw new ApiError(
       typeof serverMessage === "string" && serverMessage.length > 0
         ? serverMessage
-        : `Request failed (${res.status}${res.statusText ? ` ${res.statusText}` : ""})`
+        : `Request failed (${res.status}${res.statusText ? ` ${res.statusText}` : ""})`,
+      res.status,
     );
   }
 
