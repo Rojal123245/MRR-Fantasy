@@ -10,3 +10,6 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# claude-obsidian vault (Obsidian knowledge base, managed separately)
+/wiki/
