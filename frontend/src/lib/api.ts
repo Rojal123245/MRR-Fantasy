@@ -301,7 +301,9 @@ export interface MemberGameweek {
    *  empty and the UI must say the lineup is unknown, not show today's squad. */
   has_snapshot: boolean;
   captain_id: string | null;
-  chip_played: ChipType | null;
+  /** Every chip played that week. Usually none or one, but a Triple Captain and
+   *  a Bench Boost can land in the same week and for one manager they did. */
+  chips_played: ChipType[];
   gross_points: number | null;
   transfer_points_hit: number | null;
   total_points: number | null;
@@ -329,7 +331,7 @@ export interface GameweekScoreboardEntry {
   gross_points: number | null;
   transfer_points_hit: number | null;
   total_points: number | null;
-  chip_played: ChipType | null;
+  chips_played: ChipType[];
   has_snapshot: boolean;
 }
 
