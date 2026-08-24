@@ -547,12 +547,14 @@ pub async fn get_member_gameweek(
 
     let (bench, starters): (Vec<_>, Vec<_>) = lines.into_iter().partition(|l| l.is_bench);
 
-    let chip_played = sqlx::query_scalar::<_, String>(
-        "SELECT chip_type FROM team_chips WHERE team_id = $1 AND match_week_id = $2",
+    let chips_played = sqlx::query_scalar::<_, String>(
+        "SELECT chip_type FROM team_chips
+         WHERE team_id = $1 AND match_week_id = $2
+         ORDER BY chip_type",
     )
     .bind(team.id)
     .bind(week_id)
-    .fetch_optional(&state.pool)
+    .fetch_all(&state.pool)
     .await?;
 
     #[derive(sqlx::FromRow)]
@@ -578,13 +580,40 @@ pub async fn get_member_gameweek(
         week_number,
         has_snapshot,
         captain_id,
-        chip_played,
+        chips_played,
         gross_points: stored.as_ref().map(|s| s.gross_points),
         transfer_points_hit: stored.as_ref().map(|s| s.transfer_points_hit),
         total_points: stored.as_ref().map(|s| s.total_points),
         starters,
         bench,
     }))
+}
+
+/// Every manager in a league with what they scored in one gameweek.
+///
+/// Binds `$1` = league id, `$2` = match week id.
+///
+/// The chips are aggregated with `ARRAY(...)` rather than read with a scalar
+/// subquery. A scalar subquery raises "more than one row returned by a subquery
+/// used as an expression" the moment a manager holds two chips in one week —
+/// which `team_chips` permits, since its unique key is (team, chip_type) and not
+/// (team, week), and which a manager has actually done.
+fn scoreboard_sql() -> &'static str {
+    r#"SELECT u.id AS user_id, u.username, u.full_name,
+              ft.name AS team_name,
+              tgp.gross_points, tgp.transfer_points_hit, tgp.total_points,
+              ARRAY(SELECT tc.chip_type FROM team_chips tc
+                    WHERE tc.team_id = ft.id AND tc.match_week_id = $2
+                    ORDER BY tc.chip_type) AS chips_played,
+              EXISTS (SELECT 1 FROM team_gameweek_lineups tgl
+                      WHERE tgl.team_id = ft.id AND tgl.match_week_id = $2) AS has_snapshot
+       FROM league_members lm
+       INNER JOIN users u ON u.id = lm.user_id
+       LEFT JOIN fantasy_teams ft ON ft.user_id = u.id
+       LEFT JOIN team_gameweek_points tgp
+         ON tgp.team_id = ft.id AND tgp.match_week_id = $2
+       WHERE lm.league_id = $1
+       ORDER BY tgp.total_points DESC NULLS LAST, u.username"#
 }
 
 /// GET /api/leagues/:league_id/gameweek/:week/scoreboard
@@ -601,22 +630,7 @@ pub async fn get_gameweek_scoreboard(
 
     let (week_id, access) = week_state(&state.pool, week_number).await?;
 
-    let entries = sqlx::query_as::<_, GameweekScoreboardEntry>(
-        r#"SELECT u.id AS user_id, u.username, u.full_name,
-                  ft.name AS team_name,
-                  tgp.gross_points, tgp.transfer_points_hit, tgp.total_points,
-                  (SELECT tc.chip_type FROM team_chips tc
-                   WHERE tc.team_id = ft.id AND tc.match_week_id = $2) AS chip_played,
-                  EXISTS (SELECT 1 FROM team_gameweek_lineups tgl
-                          WHERE tgl.team_id = ft.id AND tgl.match_week_id = $2) AS has_snapshot
-           FROM league_members lm
-           INNER JOIN users u ON u.id = lm.user_id
-           LEFT JOIN fantasy_teams ft ON ft.user_id = u.id
-           LEFT JOIN team_gameweek_points tgp
-             ON tgp.team_id = ft.id AND tgp.match_week_id = $2
-           WHERE lm.league_id = $1
-           ORDER BY tgp.total_points DESC NULLS LAST, u.username"#,
-    )
+    let entries = sqlx::query_as::<_, GameweekScoreboardEntry>(scoreboard_sql())
     .bind(league_id)
     .bind(week_id)
     .fetch_all(&state.pool)
@@ -687,6 +701,86 @@ mod tests {
         .execute(&mut **tx)
         .await
         .expect("store score");
+    }
+
+    /// A manager holding two chips in one gameweek must not break the scoreboard.
+    ///
+    /// `team_chips` is unique on (team, chip_type), not (team, week), so nothing
+    /// stops a Triple Captain and a Bench Boost landing in the same gameweek —
+    /// and one manager did exactly that in GW3. Reading the chip with a scalar
+    /// subquery made Postgres raise "more than one row returned by a subquery
+    /// used as an expression", and the whole gameweek returned a 500.
+    #[tokio::test]
+    async fn two_chips_in_one_week_do_not_break_the_scoreboard() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut tx = pool.begin().await.expect("begin");
+
+        let (week_id, _) = week(&mut tx, 9820, false).await;
+
+        let user_id: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO users (username, email, password_hash, full_name)
+             VALUES ('chips_probe', 'chips_probe@example.test', 'x', 'Chips Probe')
+             RETURNING id",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .expect("insert user");
+
+        let team_id: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO fantasy_teams (user_id, name) VALUES ($1, 'Chips FC') RETURNING id",
+        )
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("insert team");
+
+        let league_id: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO leagues (name, invite_code, created_by)
+             VALUES ('Chips League', 'CHIPPROB', $1) RETURNING id",
+        )
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("insert league");
+
+        sqlx::query("INSERT INTO league_members (league_id, user_id) VALUES ($1, $2)")
+            .bind(league_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .expect("join league");
+
+        // Both chips, same week. This is what broke it.
+        for chip in ["triple_captain", "bench_boost"] {
+            sqlx::query(
+                "INSERT INTO team_chips (team_id, chip_type, match_week_id) VALUES ($1, $2, $3)",
+            )
+            .bind(team_id)
+            .bind(chip)
+            .bind(week_id)
+            .execute(&mut *tx)
+            .await
+            .expect("play chip");
+        }
+
+        let entries = sqlx::query_as::<_, GameweekScoreboardEntry>(scoreboard_sql())
+            .bind(league_id)
+            .bind(week_id)
+            .fetch_all(&mut *tx)
+            .await
+            .expect("the scoreboard must survive a manager holding two chips");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].chips_played,
+            vec!["bench_boost".to_string(), "triple_captain".to_string()],
+            "both chips must be reported, in a stable order"
+        );
+
+        tx.rollback().await.expect("rollback");
     }
 
     /// The rule managers were promised: nobody sees anybody else's picks for the

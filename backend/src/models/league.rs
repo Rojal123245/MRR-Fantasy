@@ -143,7 +143,10 @@ pub struct MemberGameweekResponse {
     /// today's squad is what made past weeks mutate.
     pub has_snapshot: bool,
     pub captain_id: Option<Uuid>,
-    pub chip_played: Option<String>,
+    /// Every chip this team played that week. Usually empty or one, but the
+    /// schema allows a Triple Captain and a Bench Boost in the same week and a
+    /// manager has done exactly that, so this is a list.
+    pub chips_played: Vec<String>,
     /// Stored totals, present once the week has been scored.
     pub gross_points: Option<i32>,
     pub transfer_points_hit: Option<i32>,
@@ -162,7 +165,7 @@ pub struct GameweekScoreboardEntry {
     pub gross_points: Option<i32>,
     pub transfer_points_hit: Option<i32>,
     pub total_points: Option<i32>,
-    pub chip_played: Option<String>,
+    pub chips_played: Vec<String>,
     /// Whether this manager's lineup for the week can be opened at all.
     pub has_snapshot: bool,
 }

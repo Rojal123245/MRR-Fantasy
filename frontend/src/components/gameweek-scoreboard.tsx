@@ -94,14 +94,15 @@ function ScoreboardRow({
                 YOU
               </span>
             )}
-            {entry.chip_played && (
+            {entry.chips_played.map((chip) => (
               <span
+                key={chip}
                 className="text-[9px] font-bold px-1.5 py-0.5 rounded"
                 style={{ background: "rgba(255,171,0,0.18)", color: "#ffab00" }}
               >
-                {CHIP_LABEL[entry.chip_played] ?? entry.chip_played}
+                {CHIP_LABEL[chip] ?? chip}
               </span>
-            )}
+            ))}
           </p>
           <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
             {entry.team_name ?? "No team"}

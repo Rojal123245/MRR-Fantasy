@@ -202,7 +202,7 @@ export function GameweekBreakdown({ data }: { data: MemberGameweek }) {
   const benchTotal = data.bench.reduce((sum, l) => sum + l.total_points, 0);
   const gross = startersTotal + benchTotal;
   const hit = data.transfer_points_hit ?? 0;
-  const benchBoost = data.chip_played === "bench_boost";
+  const benchBoost = data.chips_played.includes("bench_boost");
 
   return (
     <div className="space-y-3">
@@ -287,7 +287,7 @@ export function GameweekBreakdown({ data }: { data: MemberGameweek }) {
         </div>
       </div>
 
-      {data.chip_played === "triple_captain" && (
+      {data.chips_played.includes("triple_captain") && (
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
