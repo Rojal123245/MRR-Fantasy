@@ -66,6 +66,10 @@ pub struct AuthResponse {
 pub struct ResetPasswordRequest {
     pub email: String,
     pub new_password: String,
+    /// Proof that the account is yours. Required unless an admin is making the
+    /// change on someone's behalf, which is the recovery path for a password
+    /// nobody remembers.
+    pub current_password: Option<String>,
 }
 
 /// Generic success message response.

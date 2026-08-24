@@ -76,10 +76,14 @@ export function login(email: string, password: string) {
   });
 }
 
-export function resetPassword(email: string, newPassword: string) {
+export function resetPassword(
+  email: string,
+  newPassword: string,
+  currentPassword: string,
+) {
   return apiFetch<{ message: string }>("/api/auth/reset-password", {
     method: "POST",
-    body: { email, new_password: newPassword },
+    body: { email, new_password: newPassword, current_password: currentPassword },
   });
 }
 
