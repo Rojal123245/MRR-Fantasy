@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Plus, ArrowRight, Copy, Check, AlertCircle, Trophy, Crown, Shield, Eye, X, Lock, Calendar, ChevronLeft, ChevronRight, Star, Target, ChevronDown } from "lucide-react";
+import { Users, Plus, ArrowRight, Copy, Check, AlertCircle, Trophy, Crown, Shield, Eye, X, Lock, Calendar, ChevronLeft, ChevronRight, Star, Target, ChevronDown, ListOrdered } from "lucide-react";
 import Nav from "@/components/nav";
 import Formation from "@/components/formation";
+import { GameweekScoreboard } from "@/components/gameweek-scoreboard";
 import type { FormationPlayer } from "@/components/formation";
 import { createLeague, joinLeague, getLeague, getMyLeagues, getLockStatus, getMemberLineup, getLeagueGameweek, getWeekPoints, type League, type LeagueDetail, type MyLeague, type MemberLineup, type LeagueGameweekDetail, type PlayerPointsDisplay } from "@/lib/api";
 import { getToken, getUser, isAuthenticated } from "@/lib/auth";
@@ -27,7 +28,7 @@ export default function LeaguePage() {
   const [isLocked, setIsLocked] = useState(false);
   const [lineupModal, setLineupModal] = useState<MemberLineup | null>(null);
   const [lineupLoading, setLineupLoading] = useState(false);
-  const [viewSubTab, setViewSubTab] = useState<"standings" | "gameweek">("standings");
+  const [viewSubTab, setViewSubTab] = useState<"standings" | "gameweek" | "scoreboard">("standings");
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [gameweekData, setGameweekData] = useState<LeagueGameweekDetail | null>(null);
   const [gameweekLoading, setGameweekLoading] = useState(false);
@@ -437,6 +438,7 @@ export default function LeaguePage() {
               {[
                 { id: "standings" as const, label: "Standings", icon: Trophy },
                 { id: "gameweek" as const, label: "Gameweek Points", icon: Calendar },
+                { id: "scoreboard" as const, label: "Scoreboard", icon: ListOrdered },
               ].map((st) => {
                 const Icon = st.icon;
                 return (
@@ -526,6 +528,46 @@ export default function LeaguePage() {
                     );
                   })}
                 </div>
+              </motion.div>
+            )}
+
+            {/* Scoreboard sub-tab: who scored what, expandable to the derivation */}
+            {viewSubTab === "scoreboard" && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
+                <div className="glass-card flex items-center justify-between p-4">
+                  <button
+                    onClick={() => setSelectedWeek(Math.max(1, selectedWeek - 1))}
+                    disabled={selectedWeek <= 1}
+                    className="p-2 rounded-lg cursor-pointer bg-transparent border-none disabled:opacity-30"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <div className="text-center">
+                    <p className="text-xs uppercase tracking-wider" style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}>Gameweek</p>
+                    <p className="text-2xl font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-amber)" }}>{selectedWeek}</p>
+                  </div>
+                  <button
+                    onClick={() => setSelectedWeek(selectedWeek + 1)}
+                    className="p-2 rounded-lg cursor-pointer bg-transparent border-none"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    <ChevronRight size={20} />
+                  </button>
+                </div>
+
+                <p className="text-xs px-1" style={{ color: "var(--text-muted)" }}>
+                  Tap a manager to see how their week was built, player by player.
+                </p>
+
+                {getToken() && (
+                  <GameweekScoreboard
+                    leagueId={leagueDetail.league.id}
+                    week={selectedWeek}
+                    token={getToken() as string}
+                    currentUserId={getUser()?.id}
+                  />
+                )}
               </motion.div>
             )}
 

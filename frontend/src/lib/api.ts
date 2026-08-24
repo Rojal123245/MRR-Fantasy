@@ -233,6 +233,106 @@ export function getLeagueGameweek(leagueId: string, week: number) {
   return apiFetch<LeagueGameweekDetail>(`/api/leagues/${leagueId}/gameweek/${week}`);
 }
 
+// Completed gameweeks: snapshot lineups and the scoreboard
+
+/// One squad member's line in a completed gameweek. The six `*_points` fields
+/// are the arithmetic behind `base_points` and add up to it exactly, so the UI
+/// can show a total the manager can check by eye.
+export interface GameweekPlayerLine {
+  id: string;
+  name: string;
+  position: Position;
+  secondary_position: Position | null;
+  team_name: string;
+  photo_url: string | null;
+  /** The role they were played in that week, which set their rates. */
+  played_as: Position;
+  is_bench: boolean;
+  is_captain: boolean;
+
+  goals: number;
+  assists: number;
+  clean_sheets: number;
+  saves: number;
+  penalty_saves: number;
+  own_goals: number;
+  penalty_misses: number;
+  regular_fouls: number;
+  serious_fouls: number;
+  minutes_played: number;
+
+  goal_points: number;
+  assist_points: number;
+  clean_sheet_points: number;
+  save_points: number;
+  minutes_points: number;
+  deduction_points: number;
+
+  base_points: number;
+  /** 1, 2 as captain, or 3 under Triple Captain. */
+  multiplier: number;
+  /** Whether this line reached the team total. */
+  counted: boolean;
+  total_points: number;
+}
+
+export type ChipType = "triple_captain" | "bench_boost";
+
+export interface MemberGameweek {
+  user_id: string;
+  username: string;
+  team_name: string;
+  week_number: number;
+  /** False for gameweeks that predate lineup snapshots. The arrays are then
+   *  empty and the UI must say the lineup is unknown, not show today's squad. */
+  has_snapshot: boolean;
+  captain_id: string | null;
+  chip_played: ChipType | null;
+  gross_points: number | null;
+  transfer_points_hit: number | null;
+  total_points: number | null;
+  starters: GameweekPlayerLine[];
+  bench: GameweekPlayerLine[];
+}
+
+export function getMemberGameweek(
+  leagueId: string,
+  userId: string,
+  week: number,
+  token: string,
+) {
+  return apiFetch<MemberGameweek>(
+    `/api/leagues/${leagueId}/members/${userId}/gameweek/${week}`,
+    { token },
+  );
+}
+
+export interface GameweekScoreboardEntry {
+  user_id: string;
+  username: string;
+  full_name: string;
+  team_name: string | null;
+  gross_points: number | null;
+  transfer_points_hit: number | null;
+  total_points: number | null;
+  chip_played: ChipType | null;
+  has_snapshot: boolean;
+}
+
+export interface GameweekScoreboard {
+  league_id: string;
+  week_number: number;
+  is_complete: boolean;
+  entries: GameweekScoreboardEntry[];
+}
+
+export function getGameweekScoreboard(leagueId: string, week: number, token: string) {
+  return apiFetch<GameweekScoreboard>(
+    `/api/leagues/${leagueId}/gameweek/${week}/scoreboard`,
+    { token },
+  );
+}
+
 // Chips
 export interface ChipInfo {
   available: boolean;

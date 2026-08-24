@@ -13,12 +13,7 @@ use crate::models::PlayerPosition;
 use crate::models::{AdminPlayerStats, CreateGameweekRequest, MatchWeek, PlayerStatInput};
 use crate::services::points_engine::PointsEngine;
 use crate::services::points_sql;
-
-#[derive(sqlx::FromRow)]
-struct TeamLineupSnapshotSource {
-    id: Uuid,
-    captain_id: Option<Uuid>,
-}
+use crate::services::scoring;
 
 fn price_floor() -> Decimal {
     Decimal::new(1, 1) // 0.1
@@ -151,48 +146,6 @@ async fn apply_gameweek_price_adjustments(
     Ok(())
 }
 
-async fn snapshot_lineups_for_week(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    match_week_id: Uuid,
-) -> Result<(), sqlx::Error> {
-    let teams = sqlx::query_as::<_, TeamLineupSnapshotSource>(
-        "SELECT id, captain_id FROM fantasy_teams",
-    )
-    .fetch_all(&mut **tx)
-    .await?;
-
-    for team in teams {
-        // Keep snapshot immutable once created for this team+week.
-        let lineup_id = sqlx::query_scalar::<_, Uuid>(
-            r#"INSERT INTO team_gameweek_lineups (team_id, match_week_id, captain_id)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (team_id, match_week_id) DO UPDATE
-                 SET captain_id = team_gameweek_lineups.captain_id
-               RETURNING id"#,
-        )
-        .bind(team.id)
-        .bind(match_week_id)
-        .bind(team.captain_id)
-        .fetch_one(&mut **tx)
-        .await?;
-
-        sqlx::query(
-            r#"INSERT INTO team_gameweek_lineup_players
-                 (team_gameweek_lineup_id, player_id, is_bench, assigned_position)
-               SELECT $1, tp.player_id, tp.is_bench, tp.assigned_position
-               FROM team_players tp
-               WHERE tp.team_id = $2
-               ON CONFLICT (team_gameweek_lineup_id, player_id) DO NOTHING"#,
-        )
-        .bind(lineup_id)
-        .bind(team.id)
-        .execute(&mut **tx)
-        .await?;
-    }
-
-    Ok(())
-}
-
 #[derive(Debug, Deserialize)]
 pub struct SetLineupLockRequest {
     pub force_unlock: bool,
@@ -233,7 +186,7 @@ pub async fn create_gameweek(
     .fetch_one(&mut *tx)
     .await?;
 
-    snapshot_lineups_for_week(&mut tx, week.id).await?;
+    scoring::snapshot_all_lineups(&mut tx, week.id).await?;
 
     tx.commit().await?;
 
@@ -329,7 +282,7 @@ pub async fn toggle_gameweek(
     .await?;
 
     if updated.is_active {
-        snapshot_lineups_for_week(&mut tx, updated.id).await?;
+        scoring::snapshot_all_lineups(&mut tx, updated.id).await?;
     }
 
     tx.commit().await?;
@@ -454,7 +407,7 @@ pub async fn submit_week_stats(
         .fetch_one(&mut *tx)
         .await?;
 
-    let teams = sqlx::query_as::<_, TeamScoreContext>(points_sql::scored_teams())
+    let teams = sqlx::query_as::<_, TeamScoreContext>(&points_sql::scored_teams())
         .bind(week.id)
         .bind(week.end_date)
         .fetch_all(&mut *tx)
@@ -465,96 +418,33 @@ pub async fn submit_week_stats(
     for team in teams {
         // A snapshot, once taken, is the source of truth for that week so later
         // transfers cannot change an already-scored gameweek.
-        let (source, source_id) = match team.lineup_id {
-            Some(lineup_id) => (points_sql::Source::Snapshot, lineup_id),
-            None => (points_sql::Source::LiveSquad, team.id),
-        };
-
-        let starter_base = sqlx::query_scalar::<_, i64>(&points_sql::squad_half_total(source, false))
-            .bind(source_id)
-            .bind(week.id)
-            .fetch_one(&mut *tx)
-            .await?;
-
-        let triple_captain_active = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM team_chips WHERE team_id = $1 AND match_week_id = $2 AND chip_type = 'triple_captain'",
+        let score = scoring::score_team_gameweek(
+            &mut tx,
+            team.id,
+            team.lineup_id,
+            team.captain_id,
+            week.id,
         )
-        .bind(team.id)
-        .bind(week.id)
-        .fetch_one(&mut *tx)
-        .await?
-            > 0;
-
-        let bench_boost_active = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM team_chips WHERE team_id = $1 AND match_week_id = $2 AND chip_type = 'bench_boost'",
-        )
-        .bind(team.id)
-        .bind(week.id)
-        .fetch_one(&mut *tx)
-        .await?
-            > 0;
-
-        // The captain is already counted once in `starter_base`, so adding his score
-        // again makes 2x, and twice again makes 3x under Triple Captain.
-        let captain_bonus = if let Some(captain_id) = team.captain_id {
-            let captain_points =
-                sqlx::query_scalar::<_, i32>(&points_sql::single_starter_total(source))
-                    .bind(source_id)
-                    .bind(week.id)
-                    .bind(captain_id)
-                    .fetch_optional(&mut *tx)
-                    .await?
-                    .unwrap_or(0);
-
-            if triple_captain_active {
-                (captain_points * 2) as i64
-            } else {
-                captain_points as i64
-            }
-        } else {
-            0
-        };
-
-        let bench_bonus = if bench_boost_active {
-            sqlx::query_scalar::<_, i64>(&points_sql::squad_half_total(source, true))
-                .bind(source_id)
-                .bind(week.id)
-                .fetch_one(&mut *tx)
-                .await?
-        } else {
-            0
-        };
-
-        let transfers_this_week = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM transfers WHERE team_id = $1 AND match_week_id = $2",
-        )
-        .bind(team.id)
-        .bind(week.id)
-        .fetch_one(&mut *tx)
         .await?;
 
-        let transfer_points_hit = ((transfers_this_week as i32) - 1).max(0) * 4;
-        let gross_points = (starter_base + captain_bonus + bench_bonus) as i32;
-        let total_points = gross_points - transfer_points_hit;
-
-        sqlx::query(
-            r#"INSERT INTO team_gameweek_points
-                 (team_id, match_week_id, gross_points, transfer_points_hit, total_points)
-               VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (team_id, match_week_id) DO UPDATE SET
-                 gross_points = EXCLUDED.gross_points,
-                 transfer_points_hit = EXCLUDED.transfer_points_hit,
-                 total_points = EXCLUDED.total_points,
-                 updated_at = NOW()"#,
-        )
-        .bind(team.id)
-        .bind(week.id)
-        .bind(gross_points)
-        .bind(transfer_points_hit)
-        .bind(total_points)
-        .execute(&mut *tx)
-        .await?;
+        scoring::store_team_gameweek_score(&mut tx, team.id, week.id, &score).await?;
     }
+
+    // Roll the league on: a scored week is over, and the next one opens in the
+    // same breath. Leaving the scored week active let chips, transfers and
+    // lineup changes keep landing on a week whose points were already stored,
+    // where they could no longer affect anything; closing it without opening a
+    // successor would leave managers with nowhere to play.
+    //
+    // Only when the week being scored is the live one. Re-running an older
+    // gameweek to correct it must not wind the league back to that point.
+    let opened = scoring::close_week_and_open_next(
+        &mut tx,
+        week.id,
+        week.week_number,
+        week.is_active,
+    )
+    .await?;
 
     tx.commit().await?;
 
@@ -566,6 +456,11 @@ pub async fn submit_week_stats(
         // Teams that had not joined by the end of this week, so they are left out
         // rather than scored against their current squad.
         "teams_skipped": total_teams - teams_scored,
+        // What the league did as a result: the scored week closed, and the next
+        // one opened with every squad frozen into it. Null when an older week
+        // was re-scored, or when that was the final gameweek.
+        "gameweek_closed": if week.is_active { Some(week.week_number) } else { None },
+        "gameweek_opened": opened,
     })))
 }
 

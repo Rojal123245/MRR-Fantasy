@@ -128,6 +128,16 @@ async fn main() {
             "/:league_id/members/:user_id/lineup",
             get(handlers::leagues::get_member_lineup),
         )
+        // Completed gameweeks: the snapshot lineup with its point derivation,
+        // and the scoreboard that lists every manager for a week.
+        .route(
+            "/:league_id/members/:user_id/gameweek/:week",
+            get(handlers::leagues::get_member_gameweek),
+        )
+        .route(
+            "/:league_id/gameweek/:week/scoreboard",
+            get(handlers::leagues::get_gameweek_scoreboard),
+        )
         .layer(middleware::from_fn(auth::middleware::auth_middleware))
         .layer(Extension(config.jwt_secret.clone()));
 

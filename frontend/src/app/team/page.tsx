@@ -167,7 +167,7 @@ export default function TeamBuilderPage() {
 
   const handleSelect = (player: Player) => {
     if (lockStatus?.locked) {
-      setError("Lineup changes are locked until Sunday 12:00 PM ET");
+      setError("Team selection closed at the end of Saturday. Lineups reopen Sunday 12:00 PM ET.");
       return;
     }
 
@@ -404,7 +404,7 @@ export default function TeamBuilderPage() {
 
   const handleStartTransfer = (player: Player, isBench: boolean) => {
     if (lockStatus?.locked) {
-      setError("Transfers are locked until Sunday 12:00 PM ET");
+      setError("Transfers closed at the end of Saturday. They reopen Sunday 12:00 PM ET.");
       return;
     }
     if (captainId === player.id) {
@@ -739,7 +739,7 @@ export default function TeamBuilderPage() {
                 LINEUP LOCKED
               </p>
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Lineup changes are locked from Saturday 10:00 PM ET to Sunday 12:00 PM ET
+                Team selection closed at the end of Saturday. Lineups reopen Sunday 12:00 PM ET.
               </p>
             </div>
           </motion.div>

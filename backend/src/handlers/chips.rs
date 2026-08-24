@@ -14,6 +14,7 @@ use crate::models::{
 };
 
 use super::teams::compute_lock_status;
+use crate::services::scoring;
 
 fn chip_can_deactivate(chip: &ChipRow) -> bool {
     let today_et = Utc::now().with_timezone(&New_York).date_naive();
@@ -92,7 +93,7 @@ pub async fn activate_chip(
     let lock = compute_lock_status(&state.pool).await?;
     if lock.locked {
         return Err(AppError::BadRequest(
-            "Chips cannot be activated during the lock period (Saturday 10:00 PM ET to Sunday 12:00 PM ET)".to_string(),
+            "Chips close at the end of Saturday. They reopen Sunday 12:00 PM ET.".to_string(),
         ));
     }
 
@@ -120,6 +121,13 @@ pub async fn activate_chip(
         AppError::BadRequest("No active gameweek. Cannot activate chip right now.".to_string())
     })?;
 
+
+    if scoring::week_already_scored(&mut *state.pool.acquire().await?, active_gw.0).await? {
+        return Err(AppError::BadRequest(
+            "That gameweek has already been scored and is closed. Chips can only be played on a gameweek that has not been scored."
+                .to_string(),
+        ));
+    }
     let already_used = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM team_chips WHERE team_id = $1 AND chip_type = $2",
     )
