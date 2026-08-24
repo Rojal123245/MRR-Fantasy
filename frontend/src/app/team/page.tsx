@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield, Lock, Zap, Flame, ArrowLeftRight, X } from "lucide-react";
+import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield, Lock, Zap, Flame, ArrowLeftRight, X, ArrowUp, ArrowDown } from "lucide-react";
 import Nav from "@/components/nav";
 import PlayerCard from "@/components/player-card";
 import Formation, { type FormationPlayer, getFormationLabel, getMissingPositions } from "@/components/formation";
@@ -54,6 +54,10 @@ export default function TeamBuilderPage() {
   const [team, setTeam] = useState<FantasyTeam | null>(null);
   const [filter, setFilter] = useState<string>("ALL");
   const [search, setSearch] = useState("");
+  // The catalog arrives ordered by points, so that is the default and the list
+  // looks unchanged until a manager asks for something else.
+  const [sortKey, setSortKey] = useState<"points" | "price" | "name">("points");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -140,6 +144,29 @@ export default function TeamBuilderPage() {
       p.team_name.toLowerCase().includes(search.toLowerCase());
     return matchesPosition && matchesSearch;
   });
+
+  const sortedPlayers = [...filteredPlayers].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    const by =
+      sortKey === "price"
+        ? parseFloat(a.price) - parseFloat(b.price)
+        : sortKey === "name"
+          ? a.name.localeCompare(b.name)
+          : a.total_points - b.total_points;
+    // Fall back to the name so equal points or equal prices keep a stable order
+    // rather than shuffling between renders.
+    return by !== 0 ? by * dir : a.name.localeCompare(b.name);
+  });
+
+  /** Clicking the active sort flips it; a new one starts in its natural direction. */
+  const applySort = (key: "points" | "price" | "name") => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir(key === "name" ? "asc" : "desc");
+  };
 
   // Combined stats across starters + bench
   const allSquadPlayers = [...selected.map((fp) => fp.player), ...bench];
@@ -1466,6 +1493,45 @@ export default function TeamBuilderPage() {
               </div>
             </div>
 
+            {/* Sort */}
+            <div className="flex items-center gap-2 mb-6 flex-wrap">
+              <span
+                className="text-[10px] uppercase tracking-wider"
+                style={{ fontFamily: "var(--font-display)", color: "var(--text-muted)" }}
+              >
+                Sort
+              </span>
+              {([
+                { key: "points" as const, label: "Points" },
+                { key: "price" as const, label: "Price" },
+                { key: "name" as const, label: "Name" },
+              ]).map((s) => {
+                const active = sortKey === s.key;
+                return (
+                  <button
+                    key={s.key}
+                    onClick={() => applySort(s.key)}
+                    title={
+                      active
+                        ? `Sorted by ${s.label.toLowerCase()}, ${sortDir === "asc" ? "lowest" : "highest"} first — tap to reverse`
+                        : `Sort by ${s.label.toLowerCase()}`
+                    }
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                    style={{
+                      fontFamily: "var(--font-display)",
+                      background: active ? "var(--accent-green)" : "var(--bg-secondary)",
+                      color: active ? "var(--bg-primary)" : "var(--text-muted)",
+                      border: active ? "none" : "1px solid var(--border-color)",
+                    }}
+                  >
+                    {s.label}
+                    {active &&
+                      (sortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+                  </button>
+                );
+              })}
+            </div>
+
             {/* Player list */}
             {loading ? (
               <div className="flex items-center justify-center py-20">
@@ -1476,7 +1542,7 @@ export default function TeamBuilderPage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {filteredPlayers.map((player, i) => (
+                {sortedPlayers.map((player, i) => (
                   <PlayerCard
                     key={player.id}
                     player={player}
@@ -1494,7 +1560,7 @@ export default function TeamBuilderPage() {
                     delay={i * 0.03}
                   />
                 ))}
-                {filteredPlayers.length === 0 && (
+                {sortedPlayers.length === 0 && (
                   <div className="col-span-2 text-center py-12">
                     <Filter size={32} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
                     <p style={{ color: "var(--text-muted)" }}>No players found matching your filters</p>
