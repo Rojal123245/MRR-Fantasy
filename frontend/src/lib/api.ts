@@ -26,8 +26,22 @@ async function apiFetch<T>(endpoint: string, options: FetchOptions = {}): Promis
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: "Unknown error" }));
-    throw new Error(error.error || `Request failed with status ${res.status}`);
+    // Not every failure has a JSON body. An unmatched route returns an empty
+    // 404, and a proxy or gateway error returns HTML — both used to land here
+    // as a bare "Unknown error" with the status thrown away, which says nothing
+    // about whether the server is down, the route is missing, or the request
+    // was refused. Fall back to the status so the failure is always identifiable.
+    const payload: unknown = await res.json().catch(() => null);
+    const serverMessage =
+      payload && typeof payload === "object" && "error" in payload
+        ? (payload as { error?: unknown }).error
+        : undefined;
+
+    throw new Error(
+      typeof serverMessage === "string" && serverMessage.length > 0
+        ? serverMessage
+        : `Request failed (${res.status}${res.statusText ? ` ${res.statusText}` : ""})`
+    );
   }
 
   return res.json();
