@@ -18,6 +18,7 @@ export default function LoginPage() {
   const [showReset, setShowReset] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [resetError, setResetError] = useState("");
   const [resetSuccess, setResetSuccess] = useState("");
@@ -55,7 +56,7 @@ export default function LoginPage() {
 
     setResetLoading(true);
     try {
-      const res = await resetPassword(resetEmail, newPassword);
+      const res = await resetPassword(resetEmail, newPassword, currentPassword);
       setResetSuccess(res.message);
       setResetEmail("");
       setNewPassword("");
@@ -171,7 +172,7 @@ export default function LoginPage() {
                       className="text-xs font-medium bg-transparent border-none cursor-pointer p-0"
                       style={{ color: "var(--accent-green)" }}
                     >
-                      Forgot password?
+                      Change password
                     </button>
                   </div>
 
@@ -257,6 +258,25 @@ export default function LoginPage() {
                   </div>
 
                   <div>
+                    <label className="block text-[11px] uppercase tracking-[0.15em] font-semibold mb-2.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>Current Password</label>
+                    <div className="relative">
+                      <Lock size={18} strokeWidth={1.5} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+                      <input
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="input-field pl-12"
+                        placeholder="Your password right now"
+                        required
+                      />
+                    </div>
+                    <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
+                      Proves the account is yours. If you have genuinely forgotten it, ask an
+                      admin to reset it for you.
+                    </p>
+                  </div>
+
+                  <div>
                     <label className="block text-[11px] uppercase tracking-[0.15em] font-semibold mb-2.5" style={{ color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>New Password</label>
                     <div className="relative">
                       <KeyRound size={18} strokeWidth={1.5} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
@@ -293,7 +313,7 @@ export default function LoginPage() {
                     disabled={resetLoading}
                     className="btn-primary w-full flex items-center justify-center gap-2 text-base disabled:opacity-50 mt-2"
                   >
-                    {resetLoading ? "Resetting..." : "Reset Password"}
+                    {resetLoading ? "Changing..." : "Change Password"}
                     {!resetLoading && <ArrowRight size={18} />}
                   </button>
                 </form>
