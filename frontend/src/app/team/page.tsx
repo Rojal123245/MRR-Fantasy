@@ -3,11 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield, Lock, Zap, Flame, ArrowLeftRight, X, ArrowUp, ArrowDown } from "lucide-react";
+import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield, Lock, Zap, Flame, ArrowLeftRight, ArrowUp, ArrowDown } from "lucide-react";
 import Nav from "@/components/nav";
 import PlayerCard from "@/components/player-card";
 import Formation, { type FormationPlayer, getFormationLabel, getMissingPositions } from "@/components/formation";
 import PlayerAvatar from "@/components/player-avatar";
+import { TransferSheet } from "@/components/transfer-sheet";
 import {
   getPlayers,
   getMyTeam,
@@ -78,6 +79,8 @@ export default function TeamBuilderPage() {
   const [transferOutPlayer, setTransferOutPlayer] = useState<Player | null>(null);
   const [transferOutIsBench, setTransferOutIsBench] = useState(false);
   const [transferPending, setTransferPending] = useState(false);
+  // Server rejections belong beside Confirm, in context, not in the page banner.
+  const [transferError, setTransferError] = useState<string | null>(null);
   // Mobile-friendly quick swap state
   const [quickSwapMode, setQuickSwapMode] = useState(false);
   const [selectedBenchForSwap, setSelectedBenchForSwap] = useState<string | null>(null);
@@ -200,25 +203,6 @@ export default function TeamBuilderPage() {
 
     if (quickSwapMode) {
       setError("Quick Swap is active. Turn it off to add or remove players from the squad list.");
-      return;
-    }
-
-    // Transfer mode: clicking a catalog player completes the swap
-    if (transferMode && transferOutPlayer) {
-      if (isPlayerInSquad(player)) {
-        setError("Player already in your squad");
-        return;
-      }
-      if (!transferOutIsBench) {
-        const playable = getPlayablePositions(player);
-        if (playable.length > 1) {
-          setPendingPlayer(player);
-          return;
-        }
-        handleCompleteTransfer(player, playable[0]);
-      } else {
-        handleCompleteTransfer(player);
-      }
       return;
     }
 
@@ -429,17 +413,22 @@ export default function TeamBuilderPage() {
   const extraTransfers = transferStatus?.extra_transfers ?? 0;
   const pointsHit = transferStatus?.points_hit ?? 0;
 
-  const handleStartTransfer = (player: Player, isBench: boolean) => {
+  /** Why this player cannot be transferred out, or null if they can. */
+  const transferBlockedReason = (player: Player): string | null => {
     if (lockStatus?.locked) {
-      setError("Transfers closed at the end of Saturday. They reopen Sunday 12:00 PM ET.");
-      return;
+      return "Transfers closed at the end of Saturday — they reopen Sunday 12:00 PM ET";
     }
     if (captainId === player.id) {
-      setError("Cannot transfer out your captain. Change your captain first.");
-      return;
+      return "Change your captain before transferring them out";
     }
+    return null;
+  };
+
+  const handleStartTransfer = (player: Player, isBench: boolean) => {
+    if (transferBlockedReason(player)) return;
     setTransferOutPlayer(player);
     setTransferOutIsBench(isBench);
+    setTransferError(null);
     setError("");
   };
 
@@ -449,6 +438,7 @@ export default function TeamBuilderPage() {
     if (!token) return;
 
     setTransferPending(true);
+    setTransferError(null);
     setError("");
     setSuccess("");
 
@@ -473,7 +463,8 @@ export default function TeamBuilderPage() {
         setTransferStatus(ts);
       } catch { /* ignore */ }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Transfer failed");
+      // Keep the manager in the sheet with their selection intact.
+      setTransferError(err instanceof Error ? err.message : "Transfer failed");
     } finally {
       setTransferPending(false);
     }
@@ -772,7 +763,40 @@ export default function TeamBuilderPage() {
           </motion.div>
         )}
 
-        {/* Transfer Status Banner */}
+        {/* Transfer sheet — owns the whole transaction, commits only on Confirm */}
+      <AnimatePresence>
+        {transferOutPlayer && (
+          <TransferSheet
+            outgoing={transferOutPlayer}
+            outgoingIsBench={transferOutIsBench}
+            outgoingSlot={getAssignedPosition(transferOutPlayer.id)}
+            players={players}
+            squadPlayerIds={allSquadPlayers.map((p) => p.id)}
+            benchGksAfterOut={
+              bench.filter((p) => p.id !== transferOutPlayer.id && p.position === "GK").length
+            }
+            topPlayersAfterOut={
+              allSquadPlayers.filter((p) => p.id !== transferOutPlayer.id && p.is_top_player)
+                .length
+            }
+            budgetLimit={budgetLimit}
+            squadCostAfterOut={totalCost - parseFloat(transferOutPlayer.price)}
+            freeTransfersLeft={Math.max(0, freeTransfers - transfersUsed)}
+            pointsCost={transfersUsed >= freeTransfers ? 4 : 0}
+            pending={transferPending}
+            error={transferError}
+            onConfirm={(playerIn, assignedPosition) =>
+              handleCompleteTransfer(playerIn, assignedPosition)
+            }
+            onClose={() => {
+              setTransferOutPlayer(null);
+              setTransferError(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Transfer Status Banner */}
         {transferMode && !lockStatus?.locked && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -792,14 +816,12 @@ export default function TeamBuilderPage() {
             />
             <div className="flex-1">
               <p className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: extraTransfers > 0 ? "var(--accent-amber)" : "var(--accent-green)" }}>
-                {`GAMEWEEK ${transferStatus?.active_gameweek} — ${transfersUsed} TRANSFERS (${freeTransfers} FREE)`}
+                {`GW${transferStatus?.active_gameweek} · ${Math.max(0, freeTransfers - transfersUsed)} FREE TRANSFER${Math.max(0, freeTransfers - transfersUsed) === 1 ? "" : "S"} LEFT · $${formatMoney(remainingBudget)} BUDGET`}
               </p>
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                {transferOutPlayer
-                  ? `Select a replacement for ${transferOutPlayer.name} from the player list`
-                  : pointsHit > 0
-                    ? `${extraTransfers} extra transfer${extraTransfers > 1 ? "s" : ""} this week: -${pointsHit} points hit`
-                    : "Tap a squad player below to start a transfer"}
+                {transfersUsed >= freeTransfers
+                  ? `Your next transfer costs −4 points${pointsHit > 0 ? ` · −${pointsHit} taken so far` : ""}`
+                  : "Tap a squad player to start a transfer — nothing changes until you confirm"}
               </p>
               {transferStatus?.transferred_out && transferStatus?.transferred_in && (
                 <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
@@ -807,43 +829,8 @@ export default function TeamBuilderPage() {
                 </p>
               )}
             </div>
-            {transferOutPlayer && (
-              <button
-                onClick={() => { setTransferOutPlayer(null); setError(""); }}
-                className="p-1.5 rounded-lg cursor-pointer bg-transparent border-none"
-                style={{ color: "var(--text-muted)" }}
-                title="Cancel transfer"
-              >
-                <X size={16} />
-              </button>
-            )}
           </motion.div>
         )}
-
-        {/* Transfer Out Selection Indicator */}
-        <AnimatePresence>
-          {transferOutPlayer && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="flex items-center gap-3 p-3 rounded-lg mb-6 text-sm"
-              style={{
-                background: "rgba(239, 68, 68, 0.08)",
-                border: "1px solid rgba(239, 68, 68, 0.3)",
-                color: "var(--danger)",
-              }}
-            >
-              <ArrowLeftRight size={16} />
-              <span>
-                Transferring out <strong>{transferOutPlayer.name}</strong> — now pick a replacement from the player list
-              </span>
-              {transferPending && (
-                <div className="ml-auto w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "var(--danger)", borderTopColor: "transparent" }} />
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         {/* Position Picker Modal */}
         <AnimatePresence>
@@ -890,14 +877,7 @@ export default function TeamBuilderPage() {
                     return (
                       <button
                         key={pos}
-                        onClick={() => {
-                          if (transferOutPlayer) {
-                            handleCompleteTransfer(pendingPlayer, pos);
-                            setPendingPlayer(null);
-                          } else {
-                            addStarter(pendingPlayer, pos);
-                          }
-                        }}
+                        onClick={() => addStarter(pendingPlayer, pos)}
                         className={`flex-1 ${badgeClass} text-white font-bold py-3 rounded-xl text-sm transition-all hover:scale-105 cursor-pointer border-none`}
                         style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}
                       >
@@ -1056,7 +1036,11 @@ export default function TeamBuilderPage() {
                             e.stopPropagation();
                             handleStartTransfer(fp.player, false);
                           }}
-                          disabled={transferOutPlayer?.id === fp.player.id}
+                          title={transferBlockedReason(fp.player) ?? "Transfer this player out"}
+                          disabled={
+                            !!transferBlockedReason(fp.player) ||
+                            transferOutPlayer?.id === fp.player.id
+                          }
                           className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-30"
                           style={{
                             fontFamily: "var(--font-display)",
@@ -1368,7 +1352,11 @@ export default function TeamBuilderPage() {
                           e.stopPropagation();
                           handleStartTransfer(player, true);
                         }}
-                        disabled={transferOutPlayer?.id === player.id}
+                        title={transferBlockedReason(player) ?? "Transfer this player out"}
+                        disabled={
+                          !!transferBlockedReason(player) ||
+                          transferOutPlayer?.id === player.id
+                        }
                         className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-30"
                         style={{
                           fontFamily: "var(--font-display)",
