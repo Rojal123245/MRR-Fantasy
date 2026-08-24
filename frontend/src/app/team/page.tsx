@@ -10,6 +10,7 @@ import Formation, { type FormationPlayer, getFormationLabel, getMissingPositions
 import PlayerAvatar from "@/components/player-avatar";
 import { TransferSheet } from "@/components/transfer-sheet";
 import {
+  ApiError,
   getPlayers,
   getMyTeam,
   createTeam,
@@ -83,8 +84,26 @@ export default function TeamBuilderPage() {
   const [transferError, setTransferError] = useState<string | null>(null);
   // Mobile-friendly quick swap state
   const [quickSwapMode, setQuickSwapMode] = useState(false);
+  // What the server last confirmed. Everything on this page is local until Save,
+  // and the pitch redraws either way, so without this a manager cannot tell a
+  // rearranged squad from a saved one.
+  const [savedSignature, setSavedSignature] = useState<string | null>(null);
   const [selectedBenchForSwap, setSelectedBenchForSwap] = useState<string | null>(null);
   const [lastSwap, setLastSwap] = useState<SwapSnapshot | null>(null);
+
+  /** A stable fingerprint of a squad: who plays, where, and who is captain. */
+  const squadSignature = (
+    starters: { player: Player; assignedPosition: Position }[],
+    benchList: Player[],
+    captain: string | null,
+  ) =>
+    JSON.stringify({
+      starters: starters
+        .map((fp) => `${fp.player.id}:${fp.assignedPosition}`)
+        .sort(),
+      bench: [...benchList.map((p) => p.id)].sort(),
+      captain: captain ?? "",
+    });
 
   const loadData = useCallback(async () => {
     const token = getToken();
@@ -106,6 +125,16 @@ export default function TeamBuilderPage() {
         );
         setBench(myTeam.bench || []);
         setCaptainId(myTeam.captain_id || null);
+        setSavedSignature(
+          squadSignature(
+            (myTeam.players || []).map((sp) => ({
+              player: sp,
+              assignedPosition: sp.assigned_position ?? sp.position,
+            })),
+            myTeam.bench || [],
+            myTeam.captain_id || null,
+          ),
+        );
         // Load chip status
         try {
           const chips = await getChipStatus(myTeam.id, token);
@@ -300,7 +329,12 @@ export default function TeamBuilderPage() {
     }
 
     const token = getToken();
-    if (!token) return;
+    if (!token) {
+      // Was a bare `return`: the button did nothing at all, with no error and
+      // no request, which reads exactly like a save that quietly vanished.
+      setError("Your session has expired. Sign in again and your changes will be here.");
+      return;
+    }
 
     setSaving(true);
     setError("");
@@ -328,6 +362,16 @@ export default function TeamBuilderPage() {
       );
       setBench(updated.bench);
       setCaptainId(updated.captain_id || null);
+      setSavedSignature(
+        squadSignature(
+          (updated.players || []).map((sp) => ({
+            player: sp,
+            assignedPosition: sp.assigned_position ?? sp.position,
+          })),
+          updated.bench,
+          updated.captain_id || null,
+        ),
+      );
       // Load chip status after saving (especially for newly created teams)
       try {
         const chips = await getChipStatus(updated.id, token);
@@ -338,6 +382,11 @@ export default function TeamBuilderPage() {
       setSuccess("Team saved successfully!");
       setTimeout(() => setSuccess(""), 3000);
     } catch (err) {
+      if (err instanceof ApiError && err.isExpiredSession) {
+        setError("Your session has expired. Sign in again, then save.");
+        router.push("/login");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to save team");
     } finally {
       setSaving(false);
@@ -368,7 +417,10 @@ export default function TeamBuilderPage() {
       return;
     }
     const token = getToken();
-    if (!token) return;
+    if (!token) {
+      setError("Your session has expired. Sign in again to continue.");
+      return;
+    }
 
     setActivatingChip(chipType);
     setError("");
@@ -388,7 +440,10 @@ export default function TeamBuilderPage() {
   const handleDeactivateChip = async (chipType: "triple_captain" | "bench_boost") => {
     if (!team) return;
     const token = getToken();
-    if (!token) return;
+    if (!token) {
+      setError("Your session has expired. Sign in again to continue.");
+      return;
+    }
 
     setActivatingChip(chipType);
     setError("");
@@ -404,6 +459,23 @@ export default function TeamBuilderPage() {
       setActivatingChip(null);
     }
   };
+
+  // Unsaved work: the squad on screen differs from the one the server holds.
+  const hasUnsavedChanges =
+    savedSignature !== null && squadSignature(selected, bench, captainId) !== savedSignature;
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    // Catches a reload, a closed tab and the back button. It cannot catch an
+    // in-app link — Next's client router does not fire this — so the Save
+    // button carries the warning too.
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsavedChanges]);
 
   const isGameweekActive = transferStatus?.active_gameweek != null;
   const hasExistingSquad = selected.length === 6 && bench.length === 3;
@@ -435,7 +507,10 @@ export default function TeamBuilderPage() {
   const handleCompleteTransfer = async (playerIn: Player, assignedPos?: Position) => {
     if (!transferOutPlayer || !team) return;
     const token = getToken();
-    if (!token) return;
+    if (!token) {
+      setError("Your session has expired. Sign in again to continue.");
+      return;
+    }
 
     setTransferPending(true);
     setTransferError(null);
@@ -454,6 +529,16 @@ export default function TeamBuilderPage() {
       );
       setBench(updated.bench);
       setCaptainId(updated.captain_id || null);
+      setSavedSignature(
+        squadSignature(
+          (updated.players || []).map((sp) => ({
+            player: sp,
+            assignedPosition: sp.assigned_position ?? sp.position,
+          })),
+          updated.bench,
+          updated.captain_id || null,
+        ),
+      );
       setTransferOutPlayer(null);
       setSuccess(`Transfer complete: ${transferOutPlayer.name} out, ${playerIn.name} in!`);
       setTimeout(() => setSuccess(""), 4000);
@@ -632,9 +717,20 @@ export default function TeamBuilderPage() {
               onClick={handleSave}
               disabled={saving || !isSquadComplete || isOverBudget || lockStatus?.locked}
               className="btn-primary hidden lg:flex items-center gap-2 text-sm disabled:opacity-50"
+              style={
+                hasUnsavedChanges && !lockStatus?.locked
+                  ? { boxShadow: "0 0 0 2px var(--accent-amber)" }
+                  : undefined
+              }
             >
               {lockStatus?.locked ? <Lock size={16} /> : <Save size={16} />}
-              {lockStatus?.locked ? "Locked" : saving ? "Saving..." : "Save Team"}
+              {lockStatus?.locked
+                ? "Locked"
+                : saving
+                  ? "Saving..."
+                  : hasUnsavedChanges
+                    ? "Save Team •"
+                    : "Save Team"}
             </button>
           </div>
         </motion.div>
@@ -1605,9 +1701,15 @@ export default function TeamBuilderPage() {
                 fontFamily: "var(--font-display)",
                 background: "var(--accent-green)",
                 color: "var(--bg-primary)",
+                // The banner is at the top of a long page and this button is at
+                // the bottom, so unsaved work has to be visible from here too.
+                boxShadow:
+                  hasUnsavedChanges && !lockStatus?.locked
+                    ? "0 0 0 2px var(--accent-amber)"
+                    : undefined,
               }}
             >
-              {saving ? "SAVING" : "SAVE"}
+              {saving ? "SAVING" : hasUnsavedChanges ? "SAVE •" : "SAVE"}
             </button>
           </div>
         </div>
