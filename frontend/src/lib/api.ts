@@ -459,6 +459,17 @@ export interface LockStatus {
   unlock_at: string | null;
   manually_unlocked: boolean;
   active_gameweek: number | null;
+  /** When the active gameweek stops taking squads: the end of its Saturday. */
+  deadline: string | null;
+  /**
+   * Whether that moment has passed.
+   *
+   * Not the same as `locked`. The lock lifts at Sunday noon while the deadline
+   * stays passed, so the squad can be rearranged again — but for the next
+   * gameweek. Transfers and chips attach to a particular week and the server
+   * refuses them until the next one opens.
+   */
+  deadline_passed: boolean;
 }
 
 export function getLockStatus() {
