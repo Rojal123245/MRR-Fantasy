@@ -23,6 +23,16 @@ pub struct LockStatusResponse {
     pub unlock_at: Option<String>,
     pub manually_unlocked: bool,
     pub active_gameweek: Option<i32>,
+    /// When the active gameweek stops taking squads: the end of its Saturday.
+    pub deadline: Option<String>,
+    /// Whether that moment has passed.
+    ///
+    /// Distinct from `locked`, and the two are only the same on a Sunday
+    /// morning. From Sunday noon the lock lifts while the deadline stays
+    /// passed: managers may rearrange again, but for the *next* gameweek, and
+    /// transfers and chips — which are recorded against a particular week —
+    /// have nowhere to go until that week opens.
+    pub deadline_passed: bool,
 }
 
 /// The lock window, evaluated against a given Eastern-time instant.
@@ -35,7 +45,9 @@ pub struct LockStatusResponse {
 /// to noon as managers read a clock. On the two Sundays a year the clocks move
 /// that makes the window 11 or 13 real hours; the alternative would shift the
 /// deadline by an hour twice a season, which is worse.
-fn scheduled_lock_status_at(now_et: chrono::DateTime<chrono_tz::Tz>) -> (bool, Option<String>) {
+fn scheduled_lock_status_at(
+    now_et: chrono::DateTime<chrono_tz::Tz>,
+) -> (bool, Option<chrono::DateTime<Utc>>) {
     let locked = matches!(now_et.weekday(), chrono::Weekday::Sun) && now_et.hour() < 12;
 
     // Only Sunday morning is ever locked, so the unlock is always noon today.
@@ -44,7 +56,7 @@ fn scheduled_lock_status_at(now_et: chrono::DateTime<chrono_tz::Tz>) -> (bool, O
             .date_naive()
             .and_hms_opt(12, 0, 0)
             .and_then(|dt| dt.and_local_timezone(New_York).single())
-            .map(|t| t.to_rfc3339())
+            .map(|t| t.with_timezone(&Utc))
     } else {
         None
     };
@@ -52,8 +64,17 @@ fn scheduled_lock_status_at(now_et: chrono::DateTime<chrono_tz::Tz>) -> (bool, O
     (locked, unlock_at)
 }
 
-fn scheduled_lock_status() -> (bool, Option<String>) {
+fn scheduled_lock_status() -> (bool, Option<chrono::DateTime<Utc>>) {
     scheduled_lock_status_at(Utc::now().with_timezone(&New_York))
+}
+
+/// The instant the lock window now in progress ends, or `None` outside one.
+///
+/// This is how much time `force_unlock` actually hands back, and so how far the
+/// live gameweek's deadline moves when an admin uses it. See
+/// `admin::set_lineup_lock_control`.
+pub fn lock_window_end() -> Option<chrono::DateTime<Utc>> {
+    scheduled_lock_status().1
 }
 
 /// The schedule with the admin override applied.
@@ -61,9 +82,9 @@ fn scheduled_lock_status() -> (bool, Option<String>) {
 /// `force_unlock` in `lineup_lock_control` always wins, so an admin can reopen
 /// team selection mid-window without waiting for noon.
 fn effective_lock(
-    scheduled: (bool, Option<String>),
+    scheduled: (bool, Option<chrono::DateTime<Utc>>),
     manually_unlocked: bool,
-) -> (bool, Option<String>) {
+) -> (bool, Option<chrono::DateTime<Utc>>) {
     let (scheduled_locked, unlock_at) = scheduled;
     let locked = scheduled_locked && !manually_unlocked;
     (locked, if locked { unlock_at } else { None })
@@ -77,19 +98,41 @@ pub async fn compute_lock_status(pool: &sqlx::PgPool) -> AppResult<LockStatusRes
     .await?
     .unwrap_or(false);
 
-    let active_gameweek = sqlx::query_scalar::<_, i32>(
-        "SELECT week_number FROM match_weeks WHERE is_active = true LIMIT 1",
+    #[derive(sqlx::FromRow)]
+    struct ActiveWeek {
+        week_number: i32,
+        lineup_deadline: Option<chrono::DateTime<Utc>>,
+        settled: bool,
+    }
+
+    let active = sqlx::query_as::<_, ActiveWeek>(
+        r#"SELECT w.week_number, w.lineup_deadline,
+                  EXISTS (SELECT 1 FROM team_gameweek_points g WHERE g.match_week_id = w.id)
+                    AS settled
+           FROM match_weeks w WHERE w.is_active = true LIMIT 1"#,
     )
     .fetch_optional(pool)
     .await?;
 
     let (locked, unlock_at) = effective_lock(scheduled_lock_status(), manually_unlocked);
 
+    // A week with no deadline recorded is treated as passed, matching
+    // `scoring::week_accepts_changes`: the guards fail closed, and the client
+    // must not offer what the server will refuse.
+    let deadline_passed = active.as_ref().map_or(false, |w| {
+        w.settled || w.lineup_deadline.map_or(true, |d| Utc::now() >= d)
+    });
+
     Ok(LockStatusResponse {
         locked,
-        unlock_at,
+        unlock_at: unlock_at.map(|t| t.to_rfc3339()),
         manually_unlocked,
-        active_gameweek,
+        active_gameweek: active.as_ref().map(|w| w.week_number),
+        deadline: active
+            .as_ref()
+            .and_then(|w| w.lineup_deadline)
+            .map(|d| d.to_rfc3339()),
+        deadline_passed,
     })
 }
 
@@ -245,17 +288,6 @@ async fn team_total_points(pool: &sqlx::PgPool, team_id: Uuid) -> Result<i32, Ap
     Ok(total as i32)
 }
 
-async fn snapshot_team_lineup_if_missing(
-    pool: &sqlx::PgPool,
-    team_id: Uuid,
-    match_week_id: Uuid,
-) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
-    scoring::snapshot_team_lineup(&mut tx, team_id, match_week_id).await?;
-    tx.commit().await?;
-    Ok(())
-}
-
 /// GET /api/teams/my
 ///
 /// Get the authenticated user's fantasy team with starters and bench.
@@ -395,7 +427,6 @@ pub async fn set_team_players(
             ));
         }
         drop(conn);
-        snapshot_team_lineup_if_missing(&state.pool, team_id, week_id).await?;
     }
 
     let current_player_ids =
@@ -575,6 +606,17 @@ pub async fn set_team_players(
         .execute(&mut *tx)
         .await?;
 
+    // Carry the change into the active gameweek's lineup, which is what that
+    // week is scored from. Inside this transaction and after the writes above,
+    // so the snapshot is a copy of the squad that actually committed.
+    //
+    // `Sealed` is not an error here: past the deadline the squad still saves,
+    // it just applies from the next gameweek. That is what the manager is doing
+    // when they rearrange on a Sunday afternoon.
+    if let Some(week_id) = active_week_id {
+        let _ = scoring::refresh_team_lineup(&mut tx, team_id, week_id).await?;
+    }
+
     tx.commit().await?;
 
     // Return updated team (re-fetch to get updated captain_id)
@@ -740,7 +782,6 @@ pub async fn transfer_player(
     #[derive(sqlx::FromRow)]
     struct ActiveWeekRow {
         id: Uuid,
-        #[allow(dead_code)]
         week_number: i32,
     }
 
@@ -755,17 +796,21 @@ pub async fn transfer_player(
         )
     })?;
 
+    // A transfer is recorded against a gameweek, and the count decides that
+    // week's -4 hits, so it cannot be accepted once that week is settled. Both
+    // ends matter: a week already scored, and a week whose deadline has passed
+    // but which the admin has not scored yet. The second is not hypothetical —
+    // a manager transferred at 18:03 ET on the Sunday of gameweek 5, after the
+    // games had been played, and was charged -4 for it.
     let mut conn = state.pool.acquire().await?;
-    if scoring::week_already_scored(&mut conn, active_week.id).await? {
-        return Err(AppError::BadRequest(
-            "That gameweek has already been scored and is closed. Transfers will be \
-             available again when the next gameweek opens."
-                .to_string(),
-        ));
+    if !scoring::week_accepts_changes(&mut conn, active_week.id).await? {
+        return Err(AppError::BadRequest(format!(
+            "Gameweek {} closed at the end of Saturday. Transfers will be available \
+             again when the next gameweek opens.",
+            active_week.week_number
+        )));
     }
     drop(conn);
-
-    snapshot_team_lineup_if_missing(&state.pool, team_id, active_week.id).await?;
 
     if body.player_out_id == body.player_in_id {
         return Err(AppError::BadRequest(
@@ -964,6 +1009,22 @@ pub async fn transfer_player(
     .execute(&mut *tx)
     .await?;
 
+    // The squad this week is scored from has just changed. Same transaction as
+    // the swap, so the lineup and the transfer record cannot disagree.
+    //
+    // `Sealed` means the deadline passed between the check above and this
+    // write. Committing then would file a transfer against a settled week — the
+    // -4 hit without the player — so the whole swap is dropped instead.
+    if scoring::refresh_team_lineup(&mut tx, team_id, active_week.id).await?
+        == scoring::LineupFreeze::Sealed
+    {
+        return Err(AppError::BadRequest(format!(
+            "Gameweek {} closed while your transfer was being made. Nothing was \
+             changed. Transfers reopen with the next gameweek.",
+            active_week.week_number
+        )));
+    }
+
     tx.commit().await?;
 
     let updated_team = sqlx::query_as::<_, FantasyTeam>(
@@ -1022,6 +1083,54 @@ mod lock_schedule_tests {
         );
     }
 
+    /// The lock and the stored deadline must name the same instant.
+    ///
+    /// Two descriptions of one boundary: this module tests whether selection is
+    /// closed *right now*, and `services::deadline` computes the instant it
+    /// closes so it can be stored on a gameweek and compared in SQL. If they
+    /// drift, the app tells a manager their team is open while the week has
+    /// already stopped taking it — which is the failure this whole change
+    /// exists to remove.
+    #[test]
+    fn the_deadline_and_the_lock_agree() {
+        use crate::services::deadline::deadline_after;
+
+        // Every hour of a week, Monday 2026-08-24 to Sunday 2026-08-30.
+        for day in 24..=30 {
+            for hour in 0..24 {
+                let now = et(2026, 8, day, hour, 0);
+                let deadline = deadline_after(now.with_timezone(&Utc));
+
+                assert!(
+                    deadline > now,
+                    "a deadline computed at {now} must be in the future"
+                );
+
+                // The instant a deadline names is always the start of a lock
+                // window: locked, and one second earlier still open.
+                assert!(
+                    locked_at(deadline.with_timezone(&New_York)),
+                    "the deadline instant itself must be locked"
+                );
+                assert!(
+                    !locked_at((deadline - chrono::Duration::seconds(1)).with_timezone(&New_York)),
+                    "the second before the deadline must still be open"
+                );
+
+                // Nothing between now and the deadline is locked, unless we are
+                // already inside a lock window — which means this week's
+                // deadline has passed and we are counting to the next one.
+                if !locked_at(now) {
+                    let midpoint = deadline - (deadline - now.with_timezone(&Utc)) / 2;
+                    assert!(
+                        !locked_at(midpoint.with_timezone(&New_York)),
+                        "selection stays open from {now} until its deadline"
+                    );
+                }
+            }
+        }
+    }
+
     /// Saturday used to lock from 22:00. Nothing on Saturday locks any more.
     #[test]
     fn saturday_evening_is_no_longer_locked() {
@@ -1066,7 +1175,10 @@ mod lock_schedule_tests {
 
         // And the unlock instant is noon EDT, not noon EST.
         let (_, unlock_at) = scheduled_lock_status_at(et(2026, 3, 8, 3, 0));
-        assert_eq!(unlock_at.as_deref(), Some("2026-03-08T12:00:00-04:00"));
+        assert_eq!(
+            unlock_at.map(|t| t.with_timezone(&New_York).to_rfc3339()).as_deref(),
+            Some("2026-03-08T12:00:00-04:00")
+        );
     }
 
     /// And the Sunday the clocks go back, when 01:00 to 01:59 happens twice.
@@ -1088,7 +1200,10 @@ mod lock_schedule_tests {
         assert!(!locked_at(et(2026, 11, 1, 12, 0)), "noon EST reopens");
 
         let (_, unlock_at) = scheduled_lock_status_at(second_pass);
-        assert_eq!(unlock_at.as_deref(), Some("2026-11-01T12:00:00-05:00"));
+        assert_eq!(
+            unlock_at.map(|t| t.with_timezone(&New_York).to_rfc3339()).as_deref(),
+            Some("2026-11-01T12:00:00-05:00")
+        );
     }
 
     /// The timezone must be the DST-aware zone, not a fixed -05:00. If it were

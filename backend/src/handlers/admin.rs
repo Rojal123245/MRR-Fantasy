@@ -8,9 +8,10 @@ use uuid::Uuid;
 
 use crate::auth::handler::AppState;
 use crate::error::{AppError, AppResult};
-use crate::handlers::teams::compute_lock_status;
+use crate::handlers::teams::{self, compute_lock_status};
 use crate::models::PlayerPosition;
 use crate::models::{AdminPlayerStats, CreateGameweekRequest, MatchWeek, PlayerStatInput};
+use crate::services::deadline;
 use crate::services::points_engine::PointsEngine;
 use crate::services::points_sql;
 use crate::services::scoring;
@@ -186,7 +187,8 @@ pub async fn create_gameweek(
     .fetch_one(&mut *tx)
     .await?;
 
-    scoring::snapshot_all_lineups(&mut tx, week.id).await?;
+    // Creating a gameweek means it starts now, so its deadline is set outright.
+    scoring::open_week(&mut tx, week.id, Some(deadline::next_deadline())).await?;
 
     tx.commit().await?;
 
@@ -268,10 +270,8 @@ pub async fn toggle_gameweek(
         sqlx::query("UPDATE match_weeks SET is_active = false WHERE is_active = true")
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE match_weeks SET is_active = true WHERE week_number = $1")
-            .bind(week_number)
-            .execute(&mut *tx)
-            .await?;
+        // Activating an existing week never moves a deadline it already has.
+        scoring::open_week(&mut tx, current.id, None).await?;
     }
 
     let updated = sqlx::query_as::<_, MatchWeek>(
@@ -280,10 +280,6 @@ pub async fn toggle_gameweek(
     .bind(week_number)
     .fetch_one(&mut *tx)
     .await?;
-
-    if updated.is_active {
-        scoring::snapshot_all_lineups(&mut tx, updated.id).await?;
-    }
 
     tx.commit().await?;
 
@@ -396,6 +392,25 @@ pub async fn submit_week_stats(
     .execute(&mut *tx)
     .await?;
 
+    // Take the week for scoring, and hold it until this transaction ends.
+    //
+    // Scoring reads each team's lineup across several statements, and under
+    // READ COMMITTED each one sees a fresh snapshot. A manager's save
+    // committing partway through would be half-counted: starters from the
+    // lineup before it, the bench and captain from after, and a transfer hit
+    // for a swap that is only in one of them. The stored score would then
+    // reproduce from no lineup at all, which is the state
+    // `ops/2026-08-24_repair_scored_weeks.sql` existed to clear.
+    //
+    // The already-scored guard in `refresh_team_lineup` cannot cover this on
+    // its own: the rows this transaction is writing to `team_gameweek_points`
+    // are invisible to it until commit.
+    //
+    // Taken here, *after* the `fantasy_teams` update above, so every
+    // transaction that touches both takes `fantasy_teams` first and no cycle
+    // can form with a save holding a team's row and waiting on the week.
+    scoring::lock_week_for_scoring(&mut tx, week.id).await?;
+
     #[derive(sqlx::FromRow)]
     struct TeamScoreContext {
         id: Uuid,
@@ -502,6 +517,31 @@ pub async fn set_lineup_lock_control(
     .bind(body.force_unlock)
     .execute(&state.pool)
     .await?;
+
+    // Reopening the Sunday window has to move the deadline too, or it reopens
+    // nothing that counts: the live gameweek would still be sealed, and every
+    // save an admin has just invited would be silently dropped — the exact
+    // failure the deadline exists to remove.
+    //
+    // The new deadline is the moment the window would have closed anyway, so
+    // the override grants exactly the time it appears to and never extends a
+    // gameweek past the noon it was already going to reopen at. GREATEST keeps
+    // it monotonic, and a scored week is left alone.
+    if body.force_unlock {
+        if let Some(window_end) = teams::lock_window_end() {
+            sqlx::query(
+                r#"UPDATE match_weeks w
+                   SET lineup_deadline = GREATEST(w.lineup_deadline, $1)
+                   WHERE w.is_active
+                     AND NOT EXISTS (
+                       SELECT 1 FROM team_gameweek_points g WHERE g.match_week_id = w.id
+                     )"#,
+            )
+            .bind(window_end)
+            .execute(&state.pool)
+            .await?;
+        }
+    }
 
     let lock = compute_lock_status(&state.pool).await?;
     Ok(Json(AdminLineupLockResponse {

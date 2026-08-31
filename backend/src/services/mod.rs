@@ -1,3 +1,4 @@
+pub mod deadline;
 pub mod points_engine;
 pub mod points_sql;
 pub mod scoring;

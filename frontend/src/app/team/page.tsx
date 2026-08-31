@@ -488,7 +488,13 @@ export default function TeamBuilderPage() {
   /** Why this player cannot be transferred out, or null if they can. */
   const transferBlockedReason = (player: Player): string | null => {
     if (lockStatus?.locked) {
-      return "Transfers closed at the end of Saturday — they reopen Sunday 12:00 PM ET";
+      return "Transfers closed at the end of Saturday — they reopen with the next gameweek";
+    }
+    if (lockStatus?.deadline_passed) {
+      const gw = lockStatus.active_gameweek;
+      return gw
+        ? `Gameweek ${gw} is over — transfers reopen when the next one starts`
+        : "This gameweek is over — transfers reopen when the next one starts";
     }
     if (captainId === player.id) {
       return "Change your captain before transferring them out";
@@ -859,6 +865,32 @@ export default function TeamBuilderPage() {
           </motion.div>
         )}
 
+        {/* Between the deadline and the next gameweek: the squad can be
+            rearranged, but it counts for the gameweek to come, and transfers
+            and chips have no week to attach to yet. */}
+        {!lockStatus?.locked && lockStatus?.deadline_passed && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3 p-4 rounded-lg mb-6"
+            style={{
+              background: "rgba(255, 171, 0, 0.1)",
+              border: "1px solid rgba(255, 171, 0, 0.3)",
+            }}
+          >
+            <Lock size={20} style={{ color: "var(--accent-amber)", flexShrink: 0 }} />
+            <div>
+              <p className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--accent-amber)" }}>
+                GAMEWEEK {lockStatus.active_gameweek ?? ""} IS OVER
+              </p>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Changes you make now count for the next gameweek. Transfers and chips
+                reopen when it starts.
+              </p>
+            </div>
+          </motion.div>
+        )}
+
         {/* Transfer sheet — owns the whole transaction, commits only on Confirm */}
       <AnimatePresence>
         {transferOutPlayer && (
@@ -893,7 +925,7 @@ export default function TeamBuilderPage() {
       </AnimatePresence>
 
       {/* Transfer Status Banner */}
-        {transferMode && !lockStatus?.locked && (
+        {transferMode && !lockStatus?.locked && !lockStatus?.deadline_passed && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1248,7 +1280,7 @@ export default function TeamBuilderPage() {
                       {chipStatus?.triple_captain.available ? (
                         <button
                           onClick={() => handleActivateChip("triple_captain")}
-                          disabled={activatingChip === "triple_captain" || lockStatus?.locked || !chipStatus?.active_gameweek}
+                          disabled={activatingChip === "triple_captain" || lockStatus?.locked || lockStatus?.deadline_passed || !chipStatus?.active_gameweek}
                           className="w-full py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                           style={{
                             fontFamily: "var(--font-display)",
@@ -1332,7 +1364,7 @@ export default function TeamBuilderPage() {
                       {chipStatus?.bench_boost.available ? (
                         <button
                           onClick={() => handleActivateChip("bench_boost")}
-                          disabled={activatingChip === "bench_boost" || lockStatus?.locked || !chipStatus?.active_gameweek}
+                          disabled={activatingChip === "bench_boost" || lockStatus?.locked || lockStatus?.deadline_passed || !chipStatus?.active_gameweek}
                           className="w-full py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                           style={{
                             fontFamily: "var(--font-display)",

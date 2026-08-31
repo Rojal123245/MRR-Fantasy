@@ -122,11 +122,15 @@ pub async fn activate_chip(
     })?;
 
 
-    if scoring::week_already_scored(&mut *state.pool.acquire().await?, active_gw.0).await? {
-        return Err(AppError::BadRequest(
-            "That gameweek has already been scored and is closed. Chips can only be played on a gameweek that has not been scored."
-                .to_string(),
-        ));
+    // A chip is played on a gameweek, so it is worthless once that week's
+    // deadline has passed — and it cannot be played again. Gameweek 3 ate a
+    // Triple Captain this way, which had to be handed back by an ops script.
+    if !scoring::week_accepts_changes(&mut *state.pool.acquire().await?, active_gw.0).await? {
+        return Err(AppError::BadRequest(format!(
+            "Gameweek {} closed at the end of Saturday. Chips can be played on the \
+             next gameweek once it opens.",
+            active_gw.1
+        )));
     }
     let already_used = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM team_chips WHERE team_id = $1 AND chip_type = $2",

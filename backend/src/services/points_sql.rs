@@ -524,6 +524,7 @@ pub fn reconciliation() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::scoring::LineupFreeze;
 
 
 
@@ -1123,6 +1124,38 @@ mod tests {
                 .expect("release player");
         }
 
+        /// Move a squad member between the bench and the starting six, the way
+        /// Quick Swap does. A bench player carries no assigned position.
+        async fn set_bench(&mut self, player_id: uuid::Uuid, is_bench: bool) {
+            sqlx::query(
+                "UPDATE team_players
+                 SET is_bench = $3,
+                     assigned_position = CASE WHEN $3 THEN NULL ELSE assigned_position END
+                 WHERE team_id = $1 AND player_id = $2",
+            )
+            .bind(self.team_id)
+            .bind(player_id)
+            .bind(is_bench)
+            .execute(&mut *self.tx)
+            .await
+            .expect("set bench");
+        }
+
+        async fn player_name(&mut self, player_id: uuid::Uuid) -> String {
+            sqlx::query_scalar::<_, String>("SELECT name FROM players WHERE id = $1")
+                .bind(player_id)
+                .fetch_one(&mut *self.tx)
+                .await
+                .expect("player name")
+        }
+
+        /// Whether the week still takes transfers and chips.
+        async fn accepts_changes(&mut self, week: Week) -> bool {
+            crate::services::scoring::week_accepts_changes(&mut self.tx, week.id)
+                .await
+                .expect("week accepts changes")
+        }
+
         /// Re-assign a squad member today, the way the squad page does.
         async fn reassign(&mut self, player_id: uuid::Uuid, played_as: &str) {
             sqlx::query(
@@ -1177,6 +1210,74 @@ mod tests {
             crate::services::scoring::snapshot_team_lineup(&mut self.tx, self.team_id, week.id)
                 .await
                 .expect("snapshot lineup");
+        }
+
+        /// Put the week's deadline on one side of now or the other.
+        ///
+        /// Every guard compares against `NOW()`, which inside a transaction is
+        /// the transaction's start time, so it does not move under the test.
+        async fn deadline(&mut self, week: Week, interval: &str) {
+            sqlx::query(&format!(
+                "UPDATE match_weeks SET lineup_deadline = NOW() + interval '{interval}'
+                 WHERE id = $1"
+            ))
+            .bind(week.id)
+            .execute(&mut *self.tx)
+            .await
+            .expect("set deadline");
+        }
+
+        /// Rewrite this team's lineup for the week, exactly as a save does.
+        async fn refresh(&mut self, week: Week) -> crate::services::scoring::LineupFreeze {
+            crate::services::scoring::refresh_team_lineup(&mut self.tx, self.team_id, week.id)
+                .await
+                .expect("refresh lineup")
+        }
+
+        /// The names frozen into a gameweek for this team, starters first.
+        async fn frozen_squad(&mut self, week: Week) -> Vec<String> {
+            let team_id = self.team_id;
+            sqlx::query_scalar::<_, String>(
+                "SELECT p.name FROM team_gameweek_lineup_players lp
+                 JOIN team_gameweek_lineups l ON l.id = lp.team_gameweek_lineup_id
+                 JOIN players p ON p.id = lp.player_id
+                 WHERE l.team_id = $1 AND l.match_week_id = $2
+                 ORDER BY lp.is_bench, p.name",
+            )
+            .bind(team_id)
+            .bind(week.id)
+            .fetch_all(&mut *self.tx)
+            .await
+            .expect("frozen squad")
+        }
+
+        /// Whether a lineup header exists for this team and week at all.
+        async fn has_lineup_row(&mut self, week: Week) -> bool {
+            let team_id = self.team_id;
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM team_gameweek_lineups
+                                 WHERE team_id = $1 AND match_week_id = $2)",
+            )
+            .bind(team_id)
+            .bind(week.id)
+            .fetch_one(&mut *self.tx)
+            .await
+            .expect("has lineup row")
+        }
+
+        /// The captain frozen into a gameweek for this team.
+        async fn frozen_captain(&mut self, week: Week) -> Option<uuid::Uuid> {
+            let team_id = self.team_id;
+            sqlx::query_scalar::<_, Option<uuid::Uuid>>(
+                "SELECT captain_id FROM team_gameweek_lineups
+                 WHERE team_id = $1 AND match_week_id = $2",
+            )
+            .bind(team_id)
+            .bind(week.id)
+            .fetch_optional(&mut *self.tx)
+            .await
+            .expect("frozen captain")
+            .flatten()
         }
 
         /// `total_points` is deliberately left at 0: it is the player's own
@@ -1698,6 +1799,273 @@ mod tests {
         let shown: i32 = rows.iter().map(|r| r.total_points).sum();
         assert_eq!(shown, score.gross_points);
 
+        w.close().await;
+    }
+
+    /// The regression this whole deadline machinery exists for.
+    ///
+    /// Gameweek 5 in production was frozen on the Monday it opened, six days
+    /// before its Saturday deadline. Ten of thirty-two managers were then
+    /// scored on the squad they had held a week earlier: six transfers made on
+    /// the Saturday evening, and every re-arrangement of the week, went to a
+    /// lineup nothing ever read.
+    #[tokio::test]
+    async fn a_save_before_the_deadline_reaches_the_week() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut w = World::open(&pool, "beats_deadline", 9640).await;
+
+        let (starters, bench) = standard_squad(&mut w).await;
+        w.set_captain(Some(starters[5])).await;
+
+        // The week opens and seeds every squad, exactly as production does.
+        let week = w.week(0).await;
+        w.deadline(week, "1 day").await;
+        w.snapshot(week).await;
+
+        // Days pass, and the manager benches a starter for a bench player who
+        // goes on to score. Under the old code this never left `team_players`.
+        let dropped = starters[3];
+        let promoted = bench[1];
+        w.set_bench(dropped, true).await;
+        w.set_bench(promoted, false).await;
+        w.reassign(promoted, "DEF").await;
+        assert_eq!(w.refresh(week).await, LineupFreeze::Refreshed);
+
+        w.stats(promoted, week, Line { goals: 1, minutes: 90, ..Line::default() })
+            .await;
+        w.stats(dropped, week, Line { goals: 2, minutes: 90, ..Line::default() })
+            .await;
+
+        let score = w.score(week).await;
+        assert_eq!(
+            score.starter_base, 8,
+            "the promoted player is scored as the defender they were played as: \
+             one goal at 6 plus 2 for the minutes. The lineup frozen at the open \
+             would instead have paid the dropped midfielder's two goals at 5 plus \
+             2, which is 12, and nothing for the player who actually started"
+        );
+
+        let frozen = w.frozen_squad(week).await;
+        assert_eq!(frozen.len(), 9, "still nine players, not eleven");
+        w.close().await;
+    }
+
+    /// Past the deadline the week is settled, and a save cannot reach back into
+    /// it.
+    ///
+    /// This is the other half of the rule, and it is not hypothetical: lineups
+    /// reopen at Sunday noon while the week just played is usually still active
+    /// and unscored. A manager rearranging then is setting up the next week.
+    #[tokio::test]
+    async fn a_save_after_the_deadline_leaves_the_week_alone() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut w = World::open(&pool, "past_deadline", 9650).await;
+
+        let (starters, bench) = standard_squad(&mut w).await;
+        w.set_captain(Some(starters[0])).await;
+
+        let week = w.week(0).await;
+        w.deadline(week, "1 day").await;
+        w.snapshot(week).await;
+        let at_the_deadline = w.frozen_squad(week).await;
+
+        // The deadline passes, then the manager rearranges.
+        w.deadline(week, "-1 hour").await;
+        w.set_bench(starters[3], true).await;
+        w.set_bench(bench[1], false).await;
+        w.set_captain(Some(starters[1])).await;
+
+        assert_eq!(
+            w.refresh(week).await,
+            LineupFreeze::Sealed,
+            "a week past its deadline does not take another squad"
+        );
+        assert_eq!(
+            w.frozen_squad(week).await,
+            at_the_deadline,
+            "the lineup is the one that was in place at the deadline"
+        );
+        assert_eq!(
+            w.frozen_captain(week).await,
+            Some(starters[0]),
+            "and so is the captain"
+        );
+        w.close().await;
+    }
+
+    /// A refresh replaces the lineup. It must never append to it.
+    ///
+    /// `ops/2026-08-24_repair_scored_weeks.sql` is the record of what appending
+    /// costs: 60 rows accumulated across gameweeks 1-3, lineups grew to as many
+    /// as fourteen players, managers were paid for players they had transferred
+    /// away, and only the 10 rows that landed after scoring could be safely
+    /// removed. The other 50 are still there.
+    #[tokio::test]
+    async fn a_refresh_replaces_the_lineup_rather_than_adding_to_it() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut w = World::open(&pool, "replaces", 9660).await;
+
+        let (starters, _bench) = standard_squad(&mut w).await;
+        w.set_captain(Some(starters[0])).await;
+
+        let week = w.week(0).await;
+        w.deadline(week, "1 day").await;
+        w.snapshot(week).await;
+
+        // Three transfers in one week, each one a save.
+        let spares = w.players("FWD", 4).await;
+        let mut outgoing = starters[5];
+        for arriving in [spares[2], spares[3]] {
+            w.release(outgoing).await;
+            w.sign(arriving, false, Some("FWD")).await;
+            assert_eq!(w.refresh(week).await, LineupFreeze::Refreshed);
+            outgoing = arriving;
+        }
+
+        assert_eq!(
+            w.frozen_count(week).await,
+            9,
+            "nine players after every save, never the union of every squad held"
+        );
+        let frozen = w.frozen_squad(week).await;
+        let departed = w.player_name(starters[5]).await;
+        assert!(
+            !frozen.contains(&departed),
+            "a player transferred away before the deadline must not still be in \
+             the lineup: {frozen:?} still holds {departed}"
+        );
+        w.close().await;
+    }
+
+    /// Scoring settles a week for good, whatever its deadline says.
+    ///
+    /// The deadline and the scored test are separate guards on purpose. An
+    /// admin re-activating an old gameweek gives it a fresh deadline, and that
+    /// must not reopen a week whose points are already paid.
+    #[tokio::test]
+    async fn a_scored_week_is_sealed_even_before_its_deadline() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut w = World::open(&pool, "scored_seal", 9670).await;
+
+        let (starters, bench) = standard_squad(&mut w).await;
+        w.set_captain(Some(starters[0])).await;
+
+        let week = w.week(0).await;
+        w.deadline(week, "1 day").await;
+        w.snapshot(week).await;
+        w.stats(starters[1], week, Line { goals: 1, minutes: 90, ..Line::default() })
+            .await;
+        w.score(week).await;
+
+        // Deadline still in the future, but the week is paid for.
+        w.set_bench(starters[1], true).await;
+        w.set_bench(bench[1], false).await;
+        assert_eq!(w.refresh(week).await, LineupFreeze::Sealed);
+        w.close().await;
+    }
+
+    /// A gameweek with no deadline recorded takes nothing.
+    ///
+    /// `NOW() < NULL` is NULL, not true, so the guard fails closed. Gameweeks
+    /// 7-12 sit in production right now with no deadline, never opened.
+    #[tokio::test]
+    async fn a_week_with_no_deadline_accepts_nothing() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut w = World::open(&pool, "no_deadline", 9680).await;
+
+        let (starters, _bench) = standard_squad(&mut w).await;
+        w.set_captain(Some(starters[0])).await;
+
+        let week = w.week(0).await;
+        w.snapshot(week).await;
+
+        assert_eq!(w.refresh(week).await, LineupFreeze::Sealed);
+        assert!(
+            !w.accepts_changes(week).await,
+            "a week with no deadline must not accept transfers or chips either"
+        );
+        w.close().await;
+    }
+
+    /// A team with no squad gets no lineup row at all.
+    ///
+    /// A header with nothing under it is worse than no header:
+    /// [`week_is_scored`] reads `tgl.id IS NOT NULL` as "this team played the
+    /// week", so an empty one has the team scored 0 from an empty snapshot
+    /// rather than skipped. Production holds one such row, on gameweek 2, from
+    /// a manager who joined mid-week — the old writer created the header before
+    /// the squad existed and then never revisited it.
+    #[tokio::test]
+    async fn a_team_with_no_squad_gets_no_lineup() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut w = World::open(&pool, "empty_squad", 9700).await;
+
+        let week = w.week(0).await;
+        w.deadline(week, "1 day").await;
+
+        assert_eq!(
+            w.refresh(week).await,
+            LineupFreeze::Sealed,
+            "a manager who has not picked a squad yet has no lineup to freeze"
+        );
+        assert_eq!(w.frozen_count(week).await, 0);
+        assert!(
+            !w.has_lineup_row(week).await,
+            "and no empty header either, which would make them look like they played"
+        );
+
+        // Once they pick a squad, the same call writes it.
+        standard_squad(&mut w).await;
+        assert_eq!(w.refresh(week).await, LineupFreeze::Refreshed);
+        assert_eq!(w.frozen_count(week).await, 9);
+        w.close().await;
+    }
+
+    /// The captain moves with the squad, up to the deadline.
+    ///
+    /// The armband is read from the snapshot first
+    /// (`COALESCE(tgl.captain_id, ft.captain_id)`), so a captain change that
+    /// does not reach the snapshot is a doubled score on the wrong player.
+    #[tokio::test]
+    async fn the_captain_moves_with_the_squad_until_the_deadline() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut w = World::open(&pool, "armband", 9690).await;
+
+        let (starters, _bench) = standard_squad(&mut w).await;
+        w.set_captain(Some(starters[1])).await;
+
+        let week = w.week(0).await;
+        w.deadline(week, "1 day").await;
+        w.snapshot(week).await;
+
+        w.set_captain(Some(starters[5])).await;
+        assert_eq!(w.refresh(week).await, LineupFreeze::Refreshed);
+        assert_eq!(
+            w.frozen_captain(week).await,
+            Some(starters[5]),
+            "the armband the manager moved before the deadline is the one that pays"
+        );
         w.close().await;
     }
 
