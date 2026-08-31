@@ -92,6 +92,23 @@
 
 BEGIN;
 
+-- Fail with an explanation rather than a bare "column does not exist": every
+-- query below reads lineup_deadline, so a database that has not had migration
+-- 021 applied breaks at parse time, before any precondition can report why.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'match_weeks' AND column_name = 'lineup_deadline'
+    ) THEN
+        RAISE EXCEPTION
+            'aborting: match_weeks.lineup_deadline does not exist. Deploy the '
+            'backend first — it applies migrations/021_gameweek_lineup_deadline.sql '
+            'at boot. Do not apply that file by hand: sqlx tracks applied '
+            'migrations in _sqlx_migrations and would try to run it again.';
+    END IF;
+END $$;
+
 CREATE TEMP TABLE gw ON COMMIT DROP AS
     SELECT id, week_number, lineup_deadline
     FROM match_weeks WHERE week_number = 5;
@@ -104,8 +121,11 @@ DECLARE d timestamptz;
 BEGIN
     SELECT lineup_deadline INTO d FROM gw;
     IF d IS NULL THEN
+        -- The column exists (checked above), so 021 ran but its backfill did
+        -- not reach gameweek 5 — which it should have, from the freeze times.
         RAISE EXCEPTION
-            'aborting: gameweek 5 has no lineup_deadline. Run migration 021 first';
+            'aborting: gameweek 5 has no lineup_deadline. Migration 021 ran but '
+            'its backfill did not set one; investigate before repairing anything';
     END IF;
     IF d <> '2026-08-30 04:00:00+00'::timestamptz THEN
         RAISE EXCEPTION

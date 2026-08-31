@@ -34,6 +34,23 @@
 
 BEGIN;
 
+-- Fail with an explanation rather than a bare "column does not exist": every
+-- query below reads lineup_deadline, so a database that has not had migration
+-- 021 applied breaks at parse time, before any precondition can report why.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'match_weeks' AND column_name = 'lineup_deadline'
+    ) THEN
+        RAISE EXCEPTION
+            'aborting: match_weeks.lineup_deadline does not exist. Deploy the '
+            'backend first — it applies migrations/021_gameweek_lineup_deadline.sql '
+            'at boot. Do not apply that file by hand: sqlx tracks applied '
+            'migrations in _sqlx_migrations and would try to run it again.';
+    END IF;
+END $$;
+
 -- ---------------------------------------------------------------------------
 -- Preconditions. Any failure here aborts the whole script.
 -- ---------------------------------------------------------------------------
@@ -58,9 +75,12 @@ BEGIN
     END IF;
 
     IF live.lineup_deadline IS NULL THEN
+        -- The column exists (checked above), so 021 has run and its backfill
+        -- found nothing to anchor on: this week has no lineups to date it from,
+        -- or it was opened by code that predates the deadline.
         RAISE EXCEPTION
-            'aborting: gameweek % has no deadline. Migration 021 has not run, '
-            'or the week was opened by code that predates it',
+            'aborting: gameweek % has no deadline. Re-open it from the admin '
+            'console so it gets one, then re-run this',
             live.week_number;
     END IF;
 
