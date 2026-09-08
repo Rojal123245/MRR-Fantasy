@@ -23,6 +23,15 @@ function playablePositions(player: Player): Position[] {
 
 const money = (n: number) => n.toFixed(2);
 
+/**
+ * Money, in whole cents. Prices add up in binary floating point, so a $67.95
+ * squad against a $70.00 budget can leave $2.0499999999999 to spend and hide a
+ * $2.05 player behind "$0.00 over budget" — a rejection the server, which
+ * compares exact decimals, would never make. Comparing cents is exact for every
+ * amount this app deals in.
+ */
+const cents = (n: number) => Math.round(n * 100);
+
 /** Why a player cannot be brought in. `null` means they can. */
 type Blocked = string | null;
 
@@ -91,7 +100,7 @@ export function TransferSheet({
    * stays the authority — anything it refuses is shown against Confirm.
    */
   const blockedReason = (candidate: Player): Blocked => {
-    if (parseFloat(candidate.price) > budgetToSpend) {
+    if (cents(parseFloat(candidate.price)) > cents(budgetToSpend)) {
       return `$${money(parseFloat(candidate.price) - budgetToSpend)} over budget`;
     }
     if (candidate.is_top_player && topPlayersAfterOut >= 2) {

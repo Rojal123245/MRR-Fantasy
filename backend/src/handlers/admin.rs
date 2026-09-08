@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::{
     extract::{Path, State},
     Json,
@@ -143,6 +145,93 @@ async fn apply_gameweek_price_adjustments(
             apply_one(tx, match_week_id, pid, bot_d[i]).await?;
         }
     }
+
+    Ok(())
+}
+
+/// What every team's squad is worth right now, one row per team that holds
+/// players. Taken either side of a week's price moves to see what those moves
+/// did to each manager.
+async fn squad_costs(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<HashMap<Uuid, Decimal>, sqlx::Error> {
+    let rows: Vec<(Uuid, Decimal)> = sqlx::query_as(
+        r#"SELECT tp.team_id, COALESCE(SUM(p.price), 0)
+           FROM team_players tp
+           JOIN players p ON p.id = tp.player_id
+           GROUP BY tp.team_id"#,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
+    Ok(rows.into_iter().collect())
+}
+
+/// Apply a gameweek's price moves, and carry every manager's spending power
+/// along with them.
+///
+/// A budget is spending power, not squad value. Scoring used to end by setting
+/// each budget *to* the squad's value, which confiscated every dollar a manager
+/// had deliberately not spent: hold a $68.00 squad against a $70.00 budget and
+/// the week ended with a $68.00 budget, the $2.00 saved towards a transfer
+/// gone. Managers were charged for keeping money in the bank, and the loss
+/// ratcheted — each downgrade freed cash that the next scoring run swallowed,
+/// so a squad once affordable could never be afforded again.
+///
+/// Moving each budget *by* what the week did to that manager's squad leaves the
+/// gap between the two untouched. The bank is where its manager left it, while
+/// a price rise still buys more and a fall still buys less.
+///
+/// Measuring the move as a before-and-after of squad value, rather than by
+/// summing this week's price deltas, is also what makes re-scoring a gameweek
+/// safe. `apply_gameweek_price_adjustments` reverses the week's previous moves
+/// before re-applying them, so resubmitting unchanged stats leaves every price
+/// where it was: both snapshots agree, no budget moves, and a correction to an
+/// old week stops disturbing the money managers are holding in the live one.
+async fn apply_gameweek_price_and_budget_changes(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    match_week_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let before = squad_costs(tx).await?;
+    apply_gameweek_price_adjustments(tx, match_week_id).await?;
+    let after = squad_costs(tx).await?;
+
+    // Squads are read either side of one price change and nothing in this
+    // transaction moves a player between teams, so the two snapshots cover the
+    // same teams holding the same players. A team whose squad did not move in
+    // price contributes nothing and keeps the budget it had.
+    //
+    // A team seen only in `after` would therefore be impossible — but treating
+    // its missing `before` as zero would read the squad's entire value as a
+    // gain and hand its manager tens of dollars. Skipping is the safe reading
+    // of a state that cannot arise.
+    let mut team_ids: Vec<Uuid> = Vec::new();
+    let mut deltas: Vec<Decimal> = Vec::new();
+    for (team_id, after_cost) in &after {
+        let Some(before_cost) = before.get(team_id) else {
+            continue;
+        };
+        let delta = after_cost - before_cost;
+        if !delta.is_zero() {
+            team_ids.push(*team_id);
+            deltas.push(delta);
+        }
+    }
+
+    if team_ids.is_empty() {
+        return Ok(());
+    }
+
+    sqlx::query(
+        r#"UPDATE fantasy_teams ft
+           SET budget_limit = ft.budget_limit + moved.delta
+           FROM UNNEST($1::uuid[], $2::numeric[]) AS moved(team_id, delta)
+           WHERE ft.id = moved.team_id"#,
+    )
+    .bind(&team_ids)
+    .bind(&deltas)
+    .execute(&mut **tx)
+    .await?;
 
     Ok(())
 }
@@ -374,23 +463,7 @@ pub async fn submit_week_stats(
     .execute(&mut *tx)
     .await?;
 
-    apply_gameweek_price_adjustments(&mut tx, week.id).await?;
-
-    // Carry each user's team value forward as their next budget limit.
-    // This makes budget changes from price movements user-specific.
-    sqlx::query(
-        r#"UPDATE fantasy_teams ft
-           SET budget_limit = team_cost.total_cost
-           FROM (
-             SELECT tp.team_id, COALESCE(SUM(p.price), 0) AS total_cost
-             FROM team_players tp
-             JOIN players p ON p.id = tp.player_id
-             GROUP BY tp.team_id
-           ) AS team_cost
-           WHERE ft.id = team_cost.team_id"#,
-    )
-    .execute(&mut *tx)
-    .await?;
+    apply_gameweek_price_and_budget_changes(&mut tx, week.id).await?;
 
     // Take the week for scoring, and hold it until this transaction ends.
     //
@@ -406,9 +479,10 @@ pub async fn submit_week_stats(
     // its own: the rows this transaction is writing to `team_gameweek_points`
     // are invisible to it until commit.
     //
-    // Taken here, *after* the `fantasy_teams` update above, so every
-    // transaction that touches both takes `fantasy_teams` first and no cycle
-    // can form with a save holding a team's row and waiting on the week.
+    // Taken here, *after* the `fantasy_teams` writes in
+    // `apply_gameweek_price_and_budget_changes` above, so every transaction
+    // that touches both takes `fantasy_teams` first and no cycle can form with
+    // a save holding a team's row and waiting on the week.
     scoring::lock_week_for_scoring(&mut tx, week.id).await?;
 
     #[derive(sqlx::FromRow)]
@@ -549,4 +623,381 @@ pub async fn set_lineup_lock_control(
         effective_locked: lock.locked,
         unlock_at: lock.unlock_at,
     }))
+}
+
+#[cfg(test)]
+mod budget_carry_forward_tests {
+    use super::*;
+
+    async fn pool() -> Option<sqlx::PgPool> {
+        let url = std::env::var("DATABASE_URL").ok()?;
+        sqlx::PgPool::connect(&url).await.ok()
+    }
+
+    /// Dollars and cents, as the column stores them.
+    fn money(cents: i64) -> Decimal {
+        Decimal::new(cents, 2)
+    }
+
+    /// A manager holding nine players, and the week whose prices are about to
+    /// move. The squad is worth `9 × player_price` against a `budget` the caller
+    /// picks: the gap between the two is the bank these tests are about.
+    ///
+    /// Week numbers sit in a range no real gameweek uses, and every test rolls
+    /// its transaction back.
+    struct Fixture {
+        week_id: Uuid,
+        team_id: Uuid,
+        player_ids: Vec<Uuid>,
+    }
+
+    async fn seed(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        week_number: i32,
+        tag: &str,
+        budget: Decimal,
+        player_price: Decimal,
+    ) -> Fixture {
+        let week_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO match_weeks (week_number, start_date, end_date, is_active)
+             VALUES ($1, '2099-01-05'::date, '2099-01-11'::date, false) RETURNING id",
+        )
+        .bind(week_number)
+        .fetch_one(&mut **tx)
+        .await
+        .expect("insert week");
+
+        let user_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO users (username, email, password_hash, full_name)
+             VALUES ($1, $2, 'x', 'Budget Probe') RETURNING id",
+        )
+        .bind(format!("budget_probe_{tag}"))
+        .bind(format!("budget_probe_{tag}@example.test"))
+        .fetch_one(&mut **tx)
+        .await
+        .expect("insert user");
+
+        let team_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO fantasy_teams (user_id, name, budget_limit)
+             VALUES ($1, 'Budget FC', $2) RETURNING id",
+        )
+        .bind(user_id)
+        .bind(budget)
+        .fetch_one(&mut **tx)
+        .await
+        .expect("insert team");
+
+        let mut player_ids = Vec::new();
+        for i in 0..9 {
+            let player_id = add_player(tx, &format!("Budget Probe {tag} {i}"), player_price).await;
+            sqlx::query(
+                "INSERT INTO team_players (team_id, player_id, is_bench) VALUES ($1, $2, $3)",
+            )
+            .bind(team_id)
+            .bind(player_id)
+            .bind(i >= 6)
+            .execute(&mut **tx)
+            .await
+            .expect("insert team player");
+            player_ids.push(player_id);
+        }
+
+        Fixture {
+            week_id,
+            team_id,
+            player_ids,
+        }
+    }
+
+    async fn add_player(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        name: &str,
+        price: Decimal,
+    ) -> Uuid {
+        sqlx::query_scalar(
+            "INSERT INTO players (name, position, team_name, price)
+             VALUES ($1, 'MID', 'Probe United', $2) RETURNING id",
+        )
+        .bind(name)
+        .bind(price)
+        .fetch_one(&mut **tx)
+        .await
+        .expect("insert player")
+    }
+
+    /// Score `points` for a player in this week, which is the only thing
+    /// `apply_gameweek_price_adjustments` ranks on when deciding who moves.
+    async fn score(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        week_id: Uuid,
+        player_id: Uuid,
+        points: i32,
+    ) {
+        sqlx::query(
+            "INSERT INTO player_points (player_id, match_week_id, total_points)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (player_id, match_week_id) DO UPDATE SET total_points = EXCLUDED.total_points",
+        )
+        .bind(player_id)
+        .bind(week_id)
+        .bind(points)
+        .execute(&mut **tx)
+        .await
+        .expect("score player");
+    }
+
+    async fn budget(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, team_id: Uuid) -> Decimal {
+        sqlx::query_scalar("SELECT budget_limit FROM fantasy_teams WHERE id = $1")
+            .bind(team_id)
+            .fetch_one(&mut **tx)
+            .await
+            .expect("read budget")
+    }
+
+    async fn squad_value(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, team_id: Uuid) -> Decimal {
+        sqlx::query_scalar(
+            "SELECT COALESCE(SUM(p.price), 0) FROM team_players tp
+             JOIN players p ON p.id = tp.player_id WHERE tp.team_id = $1",
+        )
+        .bind(team_id)
+        .fetch_one(&mut **tx)
+        .await
+        .expect("read squad value")
+    }
+
+    /// The bug this module exists for.
+    ///
+    /// A manager who leaves money aside for next week's transfer used to have it
+    /// taken: scoring set the budget to the squad's value, so a $2.05 bank was
+    /// spent by the league on their behalf. A gameweek in which none of their
+    /// players moved in price has no business touching what they can spend.
+    #[tokio::test]
+    async fn unspent_money_survives_a_gameweek() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut tx = pool.begin().await.expect("begin");
+
+        // $70.00 budget, nine players at $7.55 = $67.95 squad, $2.05 banked.
+        let f = seed(&mut tx, 9840, "quiet", money(7000), money(755)).await;
+        assert_eq!(squad_value(&mut tx, f.team_id).await, money(6795));
+
+        // Six other players take every price move this week: this manager owns
+        // none of them, so nothing they hold changes price.
+        for i in 0..6 {
+            let outsider = add_player(&mut tx, &format!("Budget Outsider {i}"), money(600)).await;
+            score(&mut tx, f.week_id, outsider, 50 - i as i32 * 10).await;
+        }
+        for id in &f.player_ids {
+            score(&mut tx, f.week_id, *id, 20).await;
+        }
+
+        apply_gameweek_price_and_budget_changes(&mut tx, f.week_id)
+            .await
+            .expect("apply");
+
+        assert_eq!(
+            squad_value(&mut tx, f.team_id).await,
+            money(6795),
+            "none of their players moved"
+        );
+        assert_eq!(
+            budget(&mut tx, f.team_id).await,
+            money(7000),
+            "so their budget must not move either"
+        );
+        assert_eq!(
+            budget(&mut tx, f.team_id).await - squad_value(&mut tx, f.team_id).await,
+            money(205),
+            "the $2.05 they saved is still theirs"
+        );
+
+        tx.rollback().await.expect("rollback");
+    }
+
+    /// A manager who has registered but not yet picked a squad has nothing that
+    /// can move in price. They were skipped by the old statement's join too, so
+    /// this is not a regression — it is the case that must keep working now
+    /// that every other team's budget is written by a different rule.
+    #[tokio::test]
+    async fn a_team_with_no_players_keeps_its_budget() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut tx = pool.begin().await.expect("begin");
+
+        // Seed a normal team so the week has price moves to make at all, then
+        // strip a second team down to nothing.
+        let f = seed(&mut tx, 9844, "empty", money(7000), money(755)).await;
+        for (i, id) in f.player_ids.iter().enumerate() {
+            score(&mut tx, f.week_id, *id, 100 - i as i32).await;
+        }
+
+        let user_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO users (username, email, password_hash, full_name)
+             VALUES ('budget_probe_empty_2', 'budget_probe_empty_2@example.test', 'x', 'Empty Probe')
+             RETURNING id",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .expect("insert user");
+        let empty_team: Uuid = sqlx::query_scalar(
+            "INSERT INTO fantasy_teams (user_id, name, budget_limit)
+             VALUES ($1, 'Empty FC', 70.00) RETURNING id",
+        )
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("insert team");
+
+        apply_gameweek_price_and_budget_changes(&mut tx, f.week_id)
+            .await
+            .expect("apply");
+
+        assert_eq!(
+            budget(&mut tx, empty_team).await,
+            money(7000),
+            "a manager with no squad still has the whole budget to spend"
+        );
+
+        tx.rollback().await.expect("rollback");
+    }
+
+    /// Price moves still change spending power — that part always worked and has
+    /// to keep working. What changes is that the bank rides along instead of
+    /// being swallowed.
+    #[tokio::test]
+    async fn price_moves_shift_the_budget_and_leave_the_bank_alone() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut tx = pool.begin().await.expect("begin");
+
+        // $70.00 budget, nine players at $7.55 = $67.95 squad, $2.05 banked.
+        let f = seed(&mut tx, 9841, "moves", money(7000), money(755)).await;
+
+        // Their three best are this week's top scorers (+0.3, +0.2, +0.1) and
+        // their three worst are the bottom (-0.3, -0.2, -0.1): net zero on the
+        // squad, but every one of those moves is theirs.
+        for (i, id) in f.player_ids.iter().enumerate() {
+            score(&mut tx, f.week_id, *id, 100 - i as i32).await;
+        }
+
+        apply_gameweek_price_and_budget_changes(&mut tx, f.week_id)
+            .await
+            .expect("apply");
+
+        let squad_after = squad_value(&mut tx, f.team_id).await;
+        assert_eq!(
+            budget(&mut tx, f.team_id).await - squad_after,
+            money(205),
+            "however the prices moved, the bank is untouched"
+        );
+        assert_eq!(
+            budget(&mut tx, f.team_id).await,
+            money(7000) + (squad_after - money(6795)),
+            "and the budget moved by exactly what the squad moved"
+        );
+
+        tx.rollback().await.expect("rollback");
+    }
+
+    /// An admin correcting a gameweek's stats re-runs the whole submission, and
+    /// `ops/2026-08-30_repair_gameweek_5.sql` is a standing reason to. That used
+    /// to reach forward and empty every manager's bank in the *live* week; it
+    /// must now be a no-op for money.
+    #[tokio::test]
+    async fn rescoring_a_week_leaves_every_budget_where_it_was() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut tx = pool.begin().await.expect("begin");
+
+        let f = seed(&mut tx, 9842, "rescore", money(7000), money(755)).await;
+        for (i, id) in f.player_ids.iter().enumerate() {
+            score(&mut tx, f.week_id, *id, 100 - i as i32).await;
+        }
+
+        apply_gameweek_price_and_budget_changes(&mut tx, f.week_id)
+            .await
+            .expect("first run");
+        let after_first = budget(&mut tx, f.team_id).await;
+
+        // The same stats are submitted again, so the same players move the same
+        // way. Nothing about the manager's money should notice.
+        apply_gameweek_price_and_budget_changes(&mut tx, f.week_id)
+            .await
+            .expect("second run");
+
+        assert_eq!(
+            budget(&mut tx, f.team_id).await,
+            after_first,
+            "re-scoring a week is neither a payday nor a raid"
+        );
+
+        tx.rollback().await.expect("rollback");
+    }
+
+    /// The case that decided how this is measured.
+    ///
+    /// A manager banks a price rise, then transfers that player away. When the
+    /// admin later re-scores the week, the rise they already earned must stay
+    /// earned — clawing it back is the same confiscation in a different guise.
+    #[tokio::test]
+    async fn a_transfer_before_a_rescore_does_not_cost_the_manager_their_gain() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut tx = pool.begin().await.expect("begin");
+
+        let f = seed(&mut tx, 9843, "transfer", money(7000), money(755)).await;
+        for (i, id) in f.player_ids.iter().enumerate() {
+            score(&mut tx, f.week_id, *id, 100 - i as i32).await;
+        }
+
+        apply_gameweek_price_and_budget_changes(&mut tx, f.week_id)
+            .await
+            .expect("first run");
+        let after_first = budget(&mut tx, f.team_id).await;
+
+        // They sell the player who rose the most, for one whose price is fixed.
+        let replacement = add_player(&mut tx, "Budget Replacement", money(785)).await;
+        sqlx::query("DELETE FROM team_players WHERE team_id = $1 AND player_id = $2")
+            .bind(f.team_id)
+            .bind(f.player_ids[0])
+            .execute(&mut *tx)
+            .await
+            .expect("transfer out");
+        sqlx::query("INSERT INTO team_players (team_id, player_id) VALUES ($1, $2)")
+            .bind(f.team_id)
+            .bind(replacement)
+            .execute(&mut *tx)
+            .await
+            .expect("transfer in");
+
+        let bank_before_rescore =
+            budget(&mut tx, f.team_id).await - squad_value(&mut tx, f.team_id).await;
+
+        apply_gameweek_price_and_budget_changes(&mut tx, f.week_id)
+            .await
+            .expect("second run");
+
+        assert_eq!(
+            budget(&mut tx, f.team_id).await,
+            after_first,
+            "the rise they banked while holding the player stays banked"
+        );
+        assert_eq!(
+            budget(&mut tx, f.team_id).await - squad_value(&mut tx, f.team_id).await,
+            bank_before_rescore,
+            "and the correction does not disturb the bank either"
+        );
+
+        tx.rollback().await.expect("rollback");
+    }
 }
