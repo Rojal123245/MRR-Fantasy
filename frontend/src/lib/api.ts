@@ -390,6 +390,12 @@ export interface ChipStatus {
   triple_captain: ChipInfo;
   bench_boost: ChipInfo;
   active_gameweek: ActiveGameweek | null;
+  /**
+   * The chip already played on the active gameweek, if any. `available` is a
+   * season-level fact, so it cannot answer "may I play this one now?" — only
+   * one chip may be played per gameweek.
+   */
+  chip_played_this_week: ChipType | null;
 }
 
 export function getChipStatus(teamId: string, token: string) {

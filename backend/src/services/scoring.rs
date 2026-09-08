@@ -205,13 +205,42 @@ pub async fn open_week(
 /// team from the outset — not only for the managers who happen to touch their
 /// team before it is scored. What each manager actually plays is written by
 /// [`refresh_team_lineup`] as they change it, up to the deadline.
+///
+/// Two things it will not do, both of which decide whether a manager is counted
+/// as having played a week they did not.
 pub async fn snapshot_all_lineups(
     conn: &mut sqlx::PgConnection,
     week_id: Uuid,
 ) -> Result<(), sqlx::Error> {
-    let team_ids = sqlx::query_scalar::<_, Uuid>("SELECT id FROM fantasy_teams")
-        .fetch_all(&mut *conn)
-        .await?;
+    // A scored week is settled, and seeding it now would seed it from the
+    // squads managers hold *today*. Any team without a lineup in it — one that
+    // joined since, or was pruned from it by hand — would be admitted to a week
+    // it never played, scoring against a squad it did not own at the time.
+    //
+    // This is reachable from the admin screen with one click: activating an old
+    // gameweek to look at it runs `open_week`, which lands here.
+    // `ops/2026-08-24_repair_scored_weeks.sql` deleted exactly such a score from
+    // gameweek 1 by hand, and nothing stopped the next toggle putting it back.
+    let already_scored = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM team_gameweek_points WHERE match_week_id = $1)",
+    )
+    .bind(week_id)
+    .fetch_one(&mut *conn)
+    .await?;
+
+    if already_scored {
+        return Ok(());
+    }
+
+    // Only managers who actually hold a squad. An empty lineup header reads as
+    // "played, scored nothing" rather than "did not play" — which is why
+    // `refresh_team_lineup` refuses to write one, and this must agree with it.
+    let team_ids = sqlx::query_scalar::<_, Uuid>(
+        r#"SELECT ft.id FROM fantasy_teams ft
+           WHERE EXISTS (SELECT 1 FROM team_players tp WHERE tp.team_id = ft.id)"#,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
 
     for team_id in team_ids {
         snapshot_team_lineup(&mut *conn, team_id, week_id).await?;
@@ -537,4 +566,168 @@ async fn chip_played(
     .await?;
 
     Ok(count > 0)
+}
+
+#[cfg(test)]
+mod scored_week_tests {
+    use super::*;
+    use crate::test_support::pool;
+
+    /// A manager, a squad, and a gameweek — all in a week-number range no real
+    /// gameweek uses. Every test rolls its transaction back.
+    async fn seed(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        week_number: i32,
+        tag: &str,
+        with_squad: bool,
+    ) -> (Uuid, Uuid) {
+        let week_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO match_weeks (week_number, start_date, end_date, is_active)
+             VALUES ($1, '2099-01-05'::date, '2099-01-11'::date, false) RETURNING id",
+        )
+        .bind(week_number)
+        .fetch_one(&mut **tx)
+        .await
+        .expect("insert week");
+
+        let user_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO users (username, email, password_hash, full_name)
+             VALUES ($1, $2, 'x', 'Guard Probe') RETURNING id",
+        )
+        .bind(format!("guard_probe_{tag}"))
+        .bind(format!("guard_probe_{tag}@example.test"))
+        .fetch_one(&mut **tx)
+        .await
+        .expect("insert user");
+
+        let team_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO fantasy_teams (user_id, name) VALUES ($1, 'Guard FC') RETURNING id",
+        )
+        .bind(user_id)
+        .fetch_one(&mut **tx)
+        .await
+        .expect("insert team");
+
+        if with_squad {
+            for i in 0..9 {
+                let player_id: Uuid = sqlx::query_scalar(
+                    "INSERT INTO players (name, position, team_name, price)
+                     VALUES ($1, 'MID', 'Probe United', 5.00) RETURNING id",
+                )
+                .bind(format!("Guard Probe {tag} {i}"))
+                .fetch_one(&mut **tx)
+                .await
+                .expect("insert player");
+
+                sqlx::query(
+                    "INSERT INTO team_players (team_id, player_id, is_bench) VALUES ($1, $2, $3)",
+                )
+                .bind(team_id)
+                .bind(player_id)
+                .bind(i >= 6)
+                .execute(&mut **tx)
+                .await
+                .expect("insert team player");
+            }
+        }
+
+        (week_id, team_id)
+    }
+
+    async fn lineup_rows(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, week_id: Uuid) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM team_gameweek_lineups WHERE match_week_id = $1")
+            .bind(week_id)
+            .fetch_one(&mut **tx)
+            .await
+            .expect("count lineups")
+    }
+
+    /// Re-opening a scored gameweek must not seed it from today's squads.
+    ///
+    /// An admin activating an old week to look at it runs `open_week`, which
+    /// lands in `snapshot_all_lineups`. Seeding there admits any team that has
+    /// no lineup in that week — one that joined since, or was pruned from it by
+    /// `ops/2026-08-24_repair_scored_weeks.sql` — to a week they never played,
+    /// scoring against a squad they did not hold at the time.
+    #[tokio::test]
+    async fn re_opening_a_scored_week_does_not_seed_lineups_into_it() {
+        let Some(pool) = pool().await else { return };
+        let mut tx = pool.begin().await.expect("begin");
+
+        let (week_id, team_id) = seed(&mut tx, 9870, "scored", true).await;
+
+        // The week has been scored, and this manager holds no lineup in it —
+        // the state a hand repair leaves behind.
+        sqlx::query(
+            "INSERT INTO team_gameweek_points
+               (team_id, match_week_id, gross_points, transfer_points_hit, total_points)
+             VALUES ($1, $2, 40, 0, 40)",
+        )
+        .bind(team_id)
+        .bind(week_id)
+        .execute(&mut *tx)
+        .await
+        .expect("score the week");
+
+        assert_eq!(lineup_rows(&mut tx, week_id).await, 0, "no lineup to start");
+
+        open_week(&mut *tx, week_id, None).await.expect("re-open");
+
+        assert_eq!(
+            lineup_rows(&mut tx, week_id).await,
+            0,
+            "a scored week must not gain a lineup when it is re-opened"
+        );
+
+        tx.rollback().await.expect("rollback");
+    }
+
+    /// An unscored week still seeds normally — the guard must not break opening.
+    #[tokio::test]
+    async fn opening_an_unscored_week_still_seeds_every_squad() {
+        let Some(pool) = pool().await else { return };
+        let mut tx = pool.begin().await.expect("begin");
+
+        let (week_id, _) = seed(&mut tx, 9871, "unscored", true).await;
+
+        open_week(&mut *tx, week_id, None).await.expect("open");
+
+        assert!(
+            lineup_rows(&mut tx, week_id).await >= 1,
+            "opening a fresh week freezes the squads that exist"
+        );
+
+        tx.rollback().await.expect("rollback");
+    }
+
+    /// A manager who has not picked a squad gets no lineup header.
+    ///
+    /// `refresh_team_lineup` already refuses to write one, because an empty
+    /// header reads as "played, scored nothing" rather than "did not play".
+    /// The open-week path has to agree with it.
+    #[tokio::test]
+    async fn a_manager_without_a_squad_is_not_frozen_into_an_opening_week() {
+        let Some(pool) = pool().await else { return };
+        let mut tx = pool.begin().await.expect("begin");
+
+        let (week_id, team_id) = seed(&mut tx, 9872, "squadless", false).await;
+
+        open_week(&mut *tx, week_id, None).await.expect("open");
+
+        let theirs: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM team_gameweek_lineups WHERE match_week_id = $1 AND team_id = $2",
+        )
+        .bind(week_id)
+        .bind(team_id)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("count");
+
+        assert_eq!(
+            theirs, 0,
+            "an empty lineup header would make them look like they played"
+        );
+
+        tx.rollback().await.expect("rollback");
+    }
 }

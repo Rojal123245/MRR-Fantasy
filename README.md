@@ -76,29 +76,69 @@ Production-ready Raspberry Pi deployment files are included in:
 
 ## API Endpoints
 
-### Auth
-- `POST /api/auth/register` - Create account
-- `POST /api/auth/login` - Login, returns JWT
+Auth is a JWT bearer token from `/api/auth/login`. "admin" routes additionally
+require the account's `is_admin` flag.
 
-### Players
-- `GET /api/players` - List players (query: `?position=FWD&search=haaland`)
-- `GET /api/players/:id` - Player details
+### Auth — `/api/auth`
+- `POST /register` — create account
+- `POST /login` — returns a JWT
+- `POST /reset-password` — change a password; needs the current password, or an admin token
 
-### Teams (requires auth)
-- `POST /api/teams` - Create fantasy team
-- `GET /api/teams/my` - Get your team
-- `PUT /api/teams/:id/players` - Set 6 players
-- `GET /api/teams/:id/points` - Team points
+### Players — `/api/players`
+- `GET /` — list players (query: `?position=FWD&search=haaland`)
+- `GET /leaderboard` — players ranked by points
+- `GET /:id` — player details
 
-### Leagues (requires auth for create/join)
-- `POST /api/leagues` - Create league
-- `POST /api/leagues/join` - Join with invite code
-- `GET /api/leagues/:id` - League details
-- `GET /api/leagues/:id/leaderboard` - Rankings
+### Points — `/api/points`
+- `GET /week/:week` — a gameweek's player points
+- `GET /player/:id` — one player's history
 
-### Points
-- `GET /api/points/week/:week` - Week points
-- `GET /api/points/player/:id` - Player history
+### Teams — `/api/teams`
+- `GET /lock-status` — whether squad changes are open (public)
+- `POST /` — create a fantasy team
+- `GET /my` — your team
+- `PUT /:id/players` — set the squad: 6 starters + 3 bench
+- `GET /:id/points` — team points
+- `GET /:id/transfer` — free transfers left and what a further one costs
+- `GET /:id/chips` — chip status
+- `POST /:id/chips` — play a chip on the active gameweek
+- `DELETE /:id/chips/:chip_type` — take a chip back, before its gameweek starts
+
+### Leagues — `/api/leagues`
+- `GET /:id` — league details (public)
+- `GET /:id/leaderboard` — rankings (public)
+- `GET /:id/gameweek/:week` — one gameweek across the league (public)
+- `POST /` — create a league
+- `POST /join` — join with an invite code
+- `GET /my` — your leagues
+- `GET /:league_id/members/:user_id/lineup` — a member's squad
+- `GET /:league_id/members/:user_id/gameweek/:week` — a member's gameweek
+- `GET /:league_id/gameweek/:week/scoreboard` — every member's gameweek side by side
+
+### Accounting — `/api/accounting`
+Futsal session dues, separate from the fantasy game (migration `020`).
+- `GET /my-dues` — what you owe
+- `POST /sessions` *(admin)* — record a session
+- `GET /sessions` *(admin)* — list sessions
+- `GET /sessions/:id` *(admin)* — session detail
+- `DELETE /sessions/:id` *(admin)* — delete a session
+- `POST /sessions/:id/players` *(admin)* — add a player to a session
+- `DELETE /sessions/:session_id/players/:player_id` *(admin)* — remove one
+- `PUT /sessions/:session_id/players/:player_id/pay` *(admin)* — mark paid/unpaid
+- `GET /users` *(admin)* — known payers
+- `GET /user-summary` *(admin)* — dues per user
+
+### Admin — `/api/admin`
+- `POST /gameweek` — create or activate a gameweek. A scored week keeps the dates it was scored under
+- `GET /gameweeks` — list gameweeks
+- `PUT /gameweek/:week/toggle` — open or close a gameweek
+- `GET /gameweek/:week/stats` — stats entered for a week
+- `POST /gameweek/:week/stats` — submit stats: scores the week, moves prices and budgets, opens the next
+- `GET /lineup-lock` — current lock override and effective lock
+- `PUT /lineup-lock` — force lineups open or closed
+
+### Health
+- `GET /healthz`
 
 ## Project Structure
 
@@ -114,6 +154,24 @@ MrrFantasy/
 │       ├── auth/       # JWT, middleware, handlers
 │       ├── models/     # Data models
 │       ├── handlers/   # Route handlers
-│       └── services/   # Business logic & seeding
-└── migrations/         # PostgreSQL migrations
+│       └── services/   # Business logic, scoring & seeding
+├── migrations/         # PostgreSQL migrations, applied at boot
+└── ops/                # One-off repair scripts, run by hand — see ops/README.md
 ```
+
+## Tests
+
+The suite is mostly SQL, so most of it needs a database:
+
+```bash
+cd backend
+DATABASE_URL=postgres://localhost/mrr_fantasy cargo test
+```
+
+Without `DATABASE_URL` those tests **fail** rather than skip — an early return
+from a `#[tokio::test]` is a pass, and a suite that reports green having checked
+nothing is worse than one that does not run. To skip them deliberately, set
+`MRR_SKIP_DB_TESTS=1`; the run then says what it did not cover.
+
+`cargo run -- --migrate-and-seed` migrates and seeds a database, then exits
+without serving. CI uses it to build the database the tests run against.
