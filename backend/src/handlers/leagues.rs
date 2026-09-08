@@ -648,10 +648,7 @@ pub async fn get_gameweek_scoreboard(
 mod tests {
     use super::*;
 
-    async fn pool() -> Option<sqlx::PgPool> {
-        let url = std::env::var("DATABASE_URL").ok()?;
-        sqlx::PgPool::connect(&url).await.ok()
-    }
+    use crate::test_support::pool;
 
     /// Insert a gameweek in a range no real data uses, and say whether it is the
     /// league's open week.

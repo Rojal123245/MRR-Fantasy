@@ -229,10 +229,7 @@ pub async fn reset_password(
 mod reset_password_tests {
     use super::*;
 
-    async fn pool() -> Option<PgPool> {
-        let url = std::env::var("DATABASE_URL").ok()?;
-        PgPool::connect(&url).await.ok()
-    }
+    use crate::test_support::pool;
 
     fn hash(password: &str) -> String {
         let salt = SaltString::generate(&mut OsRng);

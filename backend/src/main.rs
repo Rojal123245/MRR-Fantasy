@@ -6,6 +6,9 @@ mod handlers;
 mod models;
 mod services;
 
+#[cfg(test)]
+mod test_support;
+
 use axum::{
     middleware,
     routing::{delete, get, post, put},
@@ -54,6 +57,17 @@ async fn main() {
     }
     if let Err(e) = services::seed::seed_match_weeks(&pool).await {
         tracing::warn!("Failed to seed match weeks: {e}");
+    }
+
+    // `--migrate-and-seed` stops here, having done everything above and nothing
+    // below. CI needs a database that is migrated and seeded before it can run
+    // the tests — most of which assert against the seeded roster — and the only
+    // code that knew how to produce one was wrapped around a server that never
+    // exits. Starting one and killing it worked, but a race is a poor thing to
+    // build a test gate on.
+    if std::env::args().any(|a| a == "--migrate-and-seed") {
+        tracing::info!("Migrated and seeded; not starting the server");
+        return;
     }
 
     let state = AppState {

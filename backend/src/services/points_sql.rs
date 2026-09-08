@@ -586,10 +586,7 @@ mod tests {
         ]
     }
 
-    async fn pool() -> Option<sqlx::PgPool> {
-        let url = std::env::var("DATABASE_URL").ok()?;
-        sqlx::PgPool::connect(&url).await.ok()
-    }
+    use crate::test_support::pool;
 
     /// The SQL and the Rust engine must never disagree. Two implementations of the
     /// same rules will drift otherwise, and the stored per-gameweek totals come
