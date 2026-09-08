@@ -1284,7 +1284,7 @@ export default function TeamBuilderPage() {
                       {chipStatus?.triple_captain.available ? (
                         <button
                           onClick={() => handleActivateChip("triple_captain")}
-                          disabled={activatingChip === "triple_captain" || lockStatus?.locked || lockStatus?.deadline_passed || !chipStatus?.active_gameweek}
+                          disabled={activatingChip === "triple_captain" || lockStatus?.locked || lockStatus?.deadline_passed || !chipStatus?.active_gameweek || !!chipStatus?.chip_played_this_week}
                           className="w-full py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                           style={{
                             fontFamily: "var(--font-display)",
@@ -1293,7 +1293,11 @@ export default function TeamBuilderPage() {
                             letterSpacing: "0.05em",
                           }}
                         >
-                          {activatingChip === "triple_captain" ? "ACTIVATING..." : "ACTIVATE"}
+                          {activatingChip === "triple_captain"
+                            ? "ACTIVATING..."
+                            : chipStatus?.chip_played_this_week
+                              ? "1 CHIP PER WEEK"
+                              : "ACTIVATE"}
                         </button>
                       ) : chipStatus?.triple_captain.can_deactivate ? (
                         <div className="flex items-center gap-2">
@@ -1368,7 +1372,7 @@ export default function TeamBuilderPage() {
                       {chipStatus?.bench_boost.available ? (
                         <button
                           onClick={() => handleActivateChip("bench_boost")}
-                          disabled={activatingChip === "bench_boost" || lockStatus?.locked || lockStatus?.deadline_passed || !chipStatus?.active_gameweek}
+                          disabled={activatingChip === "bench_boost" || lockStatus?.locked || lockStatus?.deadline_passed || !chipStatus?.active_gameweek || !!chipStatus?.chip_played_this_week}
                           className="w-full py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                           style={{
                             fontFamily: "var(--font-display)",
@@ -1377,7 +1381,11 @@ export default function TeamBuilderPage() {
                             letterSpacing: "0.05em",
                           }}
                         >
-                          {activatingChip === "bench_boost" ? "ACTIVATING..." : "ACTIVATE"}
+                          {activatingChip === "bench_boost"
+                            ? "ACTIVATING..."
+                            : chipStatus?.chip_played_this_week
+                              ? "1 CHIP PER WEEK"
+                              : "ACTIVATE"}
                         </button>
                       ) : chipStatus?.bench_boost.can_deactivate ? (
                         <div className="flex items-center gap-2">

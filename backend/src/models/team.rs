@@ -81,6 +81,13 @@ pub struct ChipStatusResponse {
     pub triple_captain: ChipInfo,
     pub bench_boost: ChipInfo,
     pub active_gameweek: Option<ActiveGameweek>,
+    /// The chip already played on the active gameweek, if any.
+    ///
+    /// Only one chip may be played per gameweek, and without this the client
+    /// cannot tell: both chips report `available` — which is a season-level
+    /// fact — so it offered both buttons and the manager's first hint that the
+    /// second was illegal would be a 409.
+    pub chip_played_this_week: Option<String>,
 }
 
 /// Request to activate a chip.
