@@ -118,8 +118,47 @@ Redeploy the frontend after changing the variable.
 
 ## 5. Ongoing deploys
 
-- Frontend updates: push to the connected Git branch and Vercel redeploys `frontend/`
-- Backend updates: run `fly deploy` from the repo root
+Both halves deploy from GitHub on a merge to `main`:
+
+- **Frontend**: Vercel's Git integration redeploys `frontend/` on push.
+- **Backend**: the `deploy-backend` job in `.github/workflows/ci.yml` runs
+  `flyctl deploy --remote-only`, then polls `/healthz` until it answers 200.
+  It runs only on a push to `main`, and only after the backend test job passes.
+
+### One-time setup for the backend deploy
+
+The job needs a Fly deploy token as the `FLY_API_TOKEN` repository secret.
+Create it and add it yourself — it is a credential, so it should not pass
+through anyone else's hands:
+
+```bash
+fly tokens create deploy -x 8760h -a mrr-fantasy-api
+```
+
+Then paste it into **Settings → Secrets and variables → Actions → New
+repository secret**, named `FLY_API_TOKEN`. Until that exists the job fails at
+the `fly deploy` step; nothing else is affected.
+
+### Deploying on merge, or on approval
+
+The job declares `environment: production`. Leave that environment with no
+required reviewers and a merge to `main` deploys straight away. Add a reviewer
+under **Settings → Environments → production** and every deploy waits for one
+click instead. The workflow is identical either way, so this can change without
+a commit.
+
+Approval is worth considering here: the backend applies migrations at boot, and
+some changes are meant to land alongside a script from `ops/` in the same
+deploy — `ops/2026-08-30_refresh_live_gameweek.sql` says so in as many words.
+An automatic deploy cannot know about that pairing.
+
+### Deploying by hand
+
+Still works, and is the fallback when the token is missing or Actions is down:
+
+```bash
+fly deploy -a mrr-fantasy-api
+```
 
 ## Notes
 
