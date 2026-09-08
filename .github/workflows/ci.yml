@@ -95,3 +95,56 @@ jobs:
         continue-on-error: true
         working-directory: frontend
         run: npm run lint
+
+  deploy-backend:
+    name: deploy backend to Fly
+    runs-on: ubuntu-latest
+
+    # Only the real thing: never from a pull request, and never before the
+    # tests that would have caught it. `needs` is what makes this a pipeline
+    # rather than two things that happen to run — a red suite stops the deploy.
+    needs: backend
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    # Serialise deploys. Two overlapping `fly deploy` runs race each other's
+    # machines, and this app applies migrations at boot, so they would race
+    # those too. Later commit wins; the earlier one is cancelled before it
+    # starts, not halfway through.
+    concurrency:
+      group: deploy-backend
+      cancel-in-progress: false
+
+    # Add required reviewers to the `production` environment in repository
+    # settings to make this click-to-approve. Leave it with none and it deploys
+    # on merge. The workflow is the same either way — the choice lives in
+    # settings, where it can be changed without a commit.
+    environment:
+      name: production
+      url: https://mrr-fantasy-api.fly.dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # `--remote-only` builds on Fly's builder rather than the runner, which
+      # is what the Dockerfile expects and keeps the image out of the runner's
+      # disk budget.
+      - name: fly deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Check it came back up
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' https://mrr-fantasy-api.fly.dev/healthz || true)
+            if [ "$code" = "200" ]; then
+              echo "healthz: 200"
+              exit 0
+            fi
+            echo "healthz: ${code:-no response} (attempt $i)"
+            sleep 5
+          done
+          echo "::error::Backend did not return 200 from /healthz after deploying."
+          exit 1
