@@ -36,12 +36,91 @@ fn bottom_price_deltas() -> [Decimal; 3] {
     ]
 }
 
-/// Top 3 / bottom 3 by this gameweek's `player_points.total_points`; reverses any prior
-/// adjustment for the same week when stats are resubmitted.
+/// Top 3 / bottom 3 by this gameweek's `player_points.total_points`, written to
+/// `players.price` and recorded in `gameweek_price_adjustments` so that scoring
+/// the week again does not double-count.
+///
+/// Re-scoring week N rebuilds every recorded week from N forward, not just N.
+///
+/// The reversal has to be exact: `delta` is already the post-clamp amount that
+/// actually landed, so its true inverse is a plain subtraction. Subtracting it
+/// is only safe once nothing later sits on top of the price, though. A player
+/// lifted in week 5 and driven to the $0.10 floor by week 7 has no room left to
+/// give week 5's rise back, and clamping the reversal instead — what this used
+/// to do — kept the difference: the ledger row was deleted regardless and the
+/// fresh move applied on top, leaving the player permanently dearer than the
+/// sum of their recorded moves, and every squad holding them richer by the
+/// swallowed amount, with no price move to justify it.
+///
+/// So the chain is unwound from the latest recorded week back to N and then
+/// re-applied forward from N. Reversing in exact application order retraces the
+/// prices the weeks actually passed through, all of which were at or above the
+/// floor, and each week's clamp is then recomputed against the price the week
+/// before it leaves behind — which is where a clamp belongs.
+///
+/// A later week is re-derived from its own `player_points`, so it picks the same
+/// six players again unless the roster itself has changed since — the same
+/// re-derivation week N has always been subject to.
+///
+/// Weeks scored before this ledger existed have no rows and so are not part of
+/// any chain; their prices stay where they are.
 async fn apply_gameweek_price_adjustments(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     match_week_id: Uuid,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), AppError> {
+    #[derive(sqlx::FromRow)]
+    struct ChainWeek {
+        id: Uuid,
+        week_number: i32,
+    }
+
+    let week_number: i32 = sqlx::query_scalar("SELECT week_number FROM match_weeks WHERE id = $1")
+        .bind(match_week_id)
+        .fetch_one(&mut **tx)
+        .await?;
+
+    // Every week whose moves are stacked on top of this one's, this week
+    // included. The ledger records no application order, so week order stands
+    // in for it; that is the order `submit_week_stats` produces unless weeks
+    // were scored out of sequence.
+    let mut chain: Vec<ChainWeek> = sqlx::query_as(
+        r#"SELECT DISTINCT w.id, w.week_number
+           FROM gameweek_price_adjustments a
+           JOIN match_weeks w ON w.id = a.match_week_id
+           WHERE w.week_number >= $1
+           ORDER BY w.week_number"#,
+    )
+    .bind(week_number)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    // Scoring this week for the first time: it has nothing to reverse, but it
+    // still leads the chain.
+    if !chain.iter().any(|w| w.id == match_week_id) {
+        chain.insert(0, ChainWeek { id: match_week_id, week_number });
+    }
+
+    for w in chain.iter().rev() {
+        reverse_week_price_adjustments(tx, w.id, w.week_number).await?;
+    }
+    for w in &chain {
+        apply_week_price_adjustments(tx, w.id).await?;
+    }
+
+    Ok(())
+}
+
+/// Undo one week's recorded price moves and drop its ledger rows.
+///
+/// A price that lands below the floor means it moved outside this ledger — an
+/// edit made by hand, or weeks scored out of order — and the chain can no
+/// longer be rebuilt from what was recorded. That is refused rather than
+/// absorbed: absorbing it is the defect this replaced, and it is silent.
+async fn reverse_week_price_adjustments(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    week_id: Uuid,
+    week_number: i32,
+) -> Result<(), AppError> {
     #[derive(sqlx::FromRow)]
     struct PrevDelta {
         player_id: Uuid,
@@ -51,26 +130,44 @@ async fn apply_gameweek_price_adjustments(
     let prev: Vec<PrevDelta> = sqlx::query_as(
         "SELECT player_id, delta FROM gameweek_price_adjustments WHERE match_week_id = $1",
     )
-    .bind(match_week_id)
+    .bind(week_id)
     .fetch_all(&mut **tx)
     .await?;
 
     for row in prev {
-        sqlx::query(
-            "UPDATE players SET price = GREATEST(price - $1, $2) WHERE id = $3",
+        let (name, price): (String, Decimal) = sqlx::query_as(
+            "UPDATE players SET price = price - $1 WHERE id = $2 RETURNING name, price",
         )
         .bind(row.delta)
-        .bind(price_floor())
         .bind(row.player_id)
-        .execute(&mut **tx)
+        .fetch_one(&mut **tx)
         .await?;
+
+        if price < price_floor() {
+            return Err(AppError::Conflict(format!(
+                "cannot re-score: undoing gameweek {week_number}'s {} move on {name} leaves \
+                 {price}, below the {} floor. Their price has been changed outside \
+                 gameweek_price_adjustments, so it can no longer be rebuilt from it",
+                row.delta,
+                price_floor(),
+            )));
+        }
     }
 
     sqlx::query("DELETE FROM gameweek_price_adjustments WHERE match_week_id = $1")
-        .bind(match_week_id)
+        .bind(week_id)
         .execute(&mut **tx)
         .await?;
 
+    Ok(())
+}
+
+/// Move this week's top three up and bottom three down, recording what actually
+/// landed after the floor is applied.
+async fn apply_week_price_adjustments(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    match_week_id: Uuid,
+) -> Result<(), sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct PlayerGwRow {
         id: Uuid,
@@ -549,4 +646,229 @@ pub async fn set_lineup_lock_control(
         effective_locked: lock.locked,
         unlock_at: lock.unlock_at,
     }))
+}
+
+#[cfg(test)]
+mod price_adjustment_tests {
+    use super::*;
+
+    async fn pool() -> Option<sqlx::PgPool> {
+        let url = std::env::var("DATABASE_URL").ok()?;
+        sqlx::PgPool::connect(&url).await.ok()
+    }
+
+    fn money(cents: i64) -> Decimal {
+        Decimal::new(cents, 2)
+    }
+
+    /// Six disposable players and three gameweeks, inside a transaction the test
+    /// rolls back.
+    ///
+    /// Six is what it takes to own every slot a week hands out: the fixture's
+    /// players are the only ones with points in these weeks, so the top three
+    /// and the bottom three are all its own and no real player's price is
+    /// touched. Bottom is reached by scoring *below* zero, since every other
+    /// player in the database sits at zero for a week that never happened.
+    struct Fixture<'a> {
+        tx: sqlx::Transaction<'a, sqlx::Postgres>,
+        players: Vec<Uuid>,
+        weeks: Vec<Uuid>,
+    }
+
+    /// Fixture weeks sit far in the future and far above every real week number,
+    /// so `week_number >= N` can never reach back into real history.
+    const BASE_WEEK: i32 = 9860;
+
+    impl<'a> Fixture<'a> {
+        /// `tag` keeps player names — and so the ordering tiebreak — unique per
+        /// test; `base_week` must be too, since `match_weeks.week_number` is
+        /// unique and two uncommitted transactions inserting the same number
+        /// would block.
+        async fn open(
+            pool: &'a sqlx::PgPool,
+            tag: &str,
+            base_week: i32,
+            prices: [i64; 6],
+        ) -> Fixture<'a> {
+            let mut tx = pool.begin().await.expect("begin");
+
+            let mut players = Vec::new();
+            for (i, cents) in prices.iter().enumerate() {
+                let id: Uuid = sqlx::query_scalar(
+                    "INSERT INTO players (name, position, team_name, price)
+                     VALUES ($1, 'MID', 'Price Fixture FC', $2) RETURNING id",
+                )
+                .bind(format!("price_{tag}_{i}"))
+                .bind(money(*cents))
+                .fetch_one(&mut *tx)
+                .await
+                .expect("insert player");
+                players.push(id);
+            }
+
+            let mut weeks = Vec::new();
+            for offset in 0..3 {
+                let start = chrono::NaiveDate::from_ymd_opt(2099, 1, 5)
+                    .expect("valid epoch")
+                    + chrono::Duration::days(7 * offset as i64);
+                let id: Uuid = sqlx::query_scalar(
+                    "INSERT INTO match_weeks (week_number, start_date, end_date, is_active)
+                     VALUES ($1, $2, $3, false) RETURNING id",
+                )
+                .bind(base_week + offset)
+                .bind(start)
+                .bind(start + chrono::Duration::days(6))
+                .fetch_one(&mut *tx)
+                .await
+                .expect("insert match week");
+                weeks.push(id);
+            }
+
+            Fixture { tx, players, weeks }
+        }
+
+        /// Score the fixture's six players for one week, in `players` order.
+        async fn score(&mut self, week: usize, points: [i32; 6]) {
+            for (i, pts) in points.iter().enumerate() {
+                sqlx::query(
+                    "INSERT INTO player_points (player_id, match_week_id, total_points)
+                     VALUES ($1, $2, $3)",
+                )
+                .bind(self.players[i])
+                .bind(self.weeks[week])
+                .bind(pts)
+                .execute(&mut *self.tx)
+                .await
+                .expect("insert player points");
+            }
+        }
+
+        async fn price(&mut self, player: usize) -> Decimal {
+            sqlx::query_scalar("SELECT price FROM players WHERE id = $1")
+                .bind(self.players[player])
+                .fetch_one(&mut *self.tx)
+                .await
+                .expect("select price")
+        }
+
+        /// Everything the ledger says has ever been done to this player's price.
+        async fn recorded_moves(&mut self, player: usize) -> Decimal {
+            sqlx::query_scalar(
+                "SELECT COALESCE(SUM(delta), 0) FROM gameweek_price_adjustments \
+                 WHERE player_id = $1",
+            )
+            .bind(self.players[player])
+            .fetch_one(&mut *self.tx)
+            .await
+            .expect("sum deltas")
+        }
+
+        async fn set_price(&mut self, player: usize, cents: i64) {
+            sqlx::query("UPDATE players SET price = $1 WHERE id = $2")
+                .bind(money(cents))
+                .bind(self.players[player])
+                .execute(&mut *self.tx)
+                .await
+                .expect("set price");
+        }
+
+        async fn adjust(&mut self, week: usize) -> Result<(), AppError> {
+            apply_gameweek_price_adjustments(&mut self.tx, self.weeks[week]).await
+        }
+
+        async fn close(self) {
+            self.tx.rollback().await.expect("rollback");
+        }
+    }
+
+    /// Player 0 tops week 0, then props up the bottom of weeks 1 and 2. The
+    /// others fill the slots around them.
+    const TOP_THEN_BOTTOM: [i32; 6] = [10, 8, 6, -3, -5, -10];
+    const BOTTOM: [i32; 6] = [-10, 10, 8, 6, -3, -5];
+
+    /// A price must never drift above the moves recorded against it.
+    ///
+    /// Week 0 lifts a $0.40 player to $0.70; weeks 1 and 2 take $0.30 each and
+    /// leave them on the $0.10 floor. Re-scoring week 0 with the same stats — the
+    /// documented repair workflow, `ops/2026-08-30_repair_gameweek_5.sql` step 4 —
+    /// has to leave the same $0.10 behind.
+    ///
+    /// It used to leave $0.40. Undoing week 0's rise from a price that no longer
+    /// had room for it was clamped at the floor, the rise was re-applied on top
+    /// regardless, and the $0.30 the clamp swallowed became budget for every
+    /// squad holding them.
+    #[tokio::test]
+    async fn re_scoring_a_week_leaves_the_price_its_ledger_implies() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+
+        let mut f = Fixture::open(&pool, "rescore", BASE_WEEK, [40, 500, 500, 500, 500, 500]).await;
+        f.score(0, TOP_THEN_BOTTOM).await;
+        f.score(1, BOTTOM).await;
+        f.score(2, BOTTOM).await;
+
+        for week in 0..3 {
+            f.adjust(week).await.expect("scoring a week adjusts prices");
+        }
+        assert_eq!(
+            f.price(0).await,
+            money(10),
+            "0.40 +0.30 -0.30 -0.30 should sit exactly on the floor",
+        );
+
+        f.adjust(0).await.expect("re-scoring week 0 should succeed");
+
+        assert_eq!(
+            f.price(0).await,
+            money(10),
+            "re-scoring week 0 with unchanged stats moved the price",
+        );
+
+        // The invariant behind that number, held for every player the weeks
+        // touched: a price is its opening price plus everything the ledger
+        // recorded, and nothing else.
+        for (player, opening) in [(0usize, 40i64), (1, 500), (2, 500), (3, 500), (4, 500), (5, 500)]
+        {
+            let moves = f.recorded_moves(player).await;
+            assert_eq!(
+                f.price(player).await,
+                money(opening) + moves,
+                "player {player} is not their opening price plus their recorded moves ({moves})",
+            );
+        }
+
+        f.close().await;
+    }
+
+    /// A price edited outside the ledger cannot be rebuilt from it, and saying so
+    /// is the point: the alternative is absorbing the difference silently, which
+    /// is what made a player dearer than their recorded moves in the first place.
+    #[tokio::test]
+    async fn re_scoring_refuses_when_a_price_moved_outside_the_ledger() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+
+        let mut f =
+            Fixture::open(&pool, "offledger", BASE_WEEK + 10, [40, 500, 500, 500, 500, 500]).await;
+        f.score(0, TOP_THEN_BOTTOM).await;
+        f.adjust(0).await.expect("scoring week 0 adjusts prices");
+
+        // By hand, in the database: a $0.30 rise now has $0.00 of room to give back.
+        f.set_price(0, 10).await;
+
+        let err = f
+            .adjust(0)
+            .await
+            .expect_err("re-scoring should refuse a price it cannot undo");
+        assert!(
+            matches!(err, AppError::Conflict(ref m) if m.contains("below the")),
+            "expected a conflict naming the floor, got {err:?}",
+        );
+
+        f.close().await;
+    }
 }
