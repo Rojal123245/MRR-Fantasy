@@ -363,12 +363,36 @@ pub async fn create_gameweek(
         .execute(&mut *tx)
         .await?;
 
+    // A scored week keeps the dates it was scored under.
+    //
+    // `end_date` is not a label: it decides who is counted as having played the
+    // week (`points_sql::scored_teams` compares it against each team's
+    // `created_at`). `ops/2026-08-24_repair_scored_weeks.sql` chose gameweeks
+    // 1-4's dates deliberately so that a manager who joined later stays out of
+    // them, and said in as many words that a later date "would make them
+    // eligible for GW1 again and undo step C".
+    //
+    // The admin screen opens on "Create / Activate GW 1" with today's date in
+    // both fields, so overwriting those dates was one click from the default
+    // state. Activating a past week is still allowed — only its dates are held.
     let week = sqlx::query_as::<_, MatchWeek>(
         r#"INSERT INTO match_weeks (week_number, start_date, end_date, is_active)
            VALUES ($1, $2, $3, true)
            ON CONFLICT (week_number) DO UPDATE
-             SET start_date = EXCLUDED.start_date,
-                 end_date = EXCLUDED.end_date,
+             SET start_date = CASE
+                   WHEN EXISTS (
+                     SELECT 1 FROM team_gameweek_points g
+                     WHERE g.match_week_id = match_weeks.id
+                   ) THEN match_weeks.start_date
+                   ELSE EXCLUDED.start_date
+                 END,
+                 end_date = CASE
+                   WHEN EXISTS (
+                     SELECT 1 FROM team_gameweek_points g
+                     WHERE g.match_week_id = match_weeks.id
+                   ) THEN match_weeks.end_date
+                   ELSE EXCLUDED.end_date
+                 END,
                  is_active = true
            RETURNING id, week_number, start_date, end_date, is_active"#,
     )
@@ -731,10 +755,7 @@ pub async fn set_lineup_lock_control(
 mod price_adjustment_tests {
     use super::*;
 
-    async fn pool() -> Option<sqlx::PgPool> {
-        let url = std::env::var("DATABASE_URL").ok()?;
-        sqlx::PgPool::connect(&url).await.ok()
-    }
+    use crate::test_support::pool;
 
     fn money(cents: i64) -> Decimal {
         Decimal::new(cents, 2)
@@ -956,10 +977,7 @@ mod price_adjustment_tests {
 mod budget_carry_forward_tests {
     use super::*;
 
-    async fn pool() -> Option<sqlx::PgPool> {
-        let url = std::env::var("DATABASE_URL").ok()?;
-        sqlx::PgPool::connect(&url).await.ok()
-    }
+    use crate::test_support::pool;
 
     /// Dollars and cents, as the column stores them.
     fn money(cents: i64) -> Decimal {
