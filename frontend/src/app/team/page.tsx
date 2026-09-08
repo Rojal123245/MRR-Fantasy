@@ -206,7 +206,11 @@ export default function TeamBuilderPage() {
   const budgetLimit = parseFloat(team?.budget_limit ?? "70");
   const totalCost = allSquadPlayers.reduce((sum, p) => sum + parseFloat(p.price), 0);
   const remainingBudget = budgetLimit - totalCost;
-  const isOverBudget = totalCost > budgetLimit;
+  // Prices add up in binary floating point, so a squad that exactly fits its
+  // budget can total 70.00000000000001 and be painted as over it — blocking a
+  // save the server, which compares exact decimals, would accept. Whole cents
+  // are exact for every amount this app deals in.
+  const isOverBudget = Math.round(totalCost * 100) > Math.round(budgetLimit * 100);
   const formatMoney = (value: number) => value.toFixed(2);
   const benchGkCount = bench.filter((p) => p.position === "GK" || p.secondary_position === "GK").length;
 
@@ -246,7 +250,7 @@ export default function TeamBuilderPage() {
     }
 
     const newCost = totalCost + parseFloat(player.price);
-    if (newCost > budgetLimit) {
+    if (Math.round(newCost * 100) > Math.round(budgetLimit * 100)) {
       setError(
         `Adding ${player.name} ($${player.price}) would exceed your $${formatMoney(budgetLimit)} budget. Remaining: $${formatMoney(remainingBudget)}`
       );
