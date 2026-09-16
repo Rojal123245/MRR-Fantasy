@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield, Lock, Zap, Flame, ArrowLeftRight, ArrowUp, ArrowDown } from "lucide-react";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { Search, Filter, Save, AlertCircle, Check, Crown, DollarSign, Users, Armchair, ChevronDown, Shield, Lock, Zap, Flame, ArrowLeftRight, ArrowUp, ArrowDown, Undo2, X } from "lucide-react";
 import Nav from "@/components/nav";
 import PlayerCard from "@/components/player-card";
-import Formation, { type FormationPlayer, getFormationLabel, getMissingPositions } from "@/components/formation";
+import Formation, { type FormationPlayer } from "@/components/formation";
 import PlayerAvatar from "@/components/player-avatar";
+import { PlayerTray, type TrayAction } from "@/components/player-tray";
+import { PositionPill } from "@/components/position-switch";
 import { TransferSheet } from "@/components/transfer-sheet";
 import {
   ApiError,
@@ -30,6 +32,18 @@ import {
   type TransferStatus,
 } from "@/lib/api";
 import { getToken, getUser, isAuthenticated } from "@/lib/auth";
+import {
+  POSITION_BADGE,
+  getFormationLabel,
+  getLineupIssues,
+  getMissingPositions,
+  hasLineupIssues,
+  moveStarter,
+  otherPosition,
+  playablePositions,
+  previewMove,
+  swapSpots,
+} from "@/lib/lineup";
 
 const positions = ["ALL", "GK", "DEF", "MID", "FWD"] as const;
 type AddMode = "starter" | "bench";
@@ -39,13 +53,49 @@ type SwapSnapshot = {
   captainId: string | null;
 };
 
-/** Determine which positions a player can play. */
-function getPlayablePositions(player: Player): Position[] {
-  const result: Position[] = [player.position];
-  if (player.secondary_position && player.secondary_position !== player.position) {
-    result.push(player.secondary_position);
+const LOCK_MSG = "Team selection closed at the end of Saturday. Lineups reopen Sunday 12:00 PM ET.";
+
+// Whether the manager has already met the position switch, so its tip shows
+// once. Read through useSyncExternalStore: the server has no localStorage, and
+// reading it during render would not match the server's HTML.
+const HINT_KEY = "mrr:lineup-switch-hint-seen";
+let hintSeenInMemory = false;
+const hintListeners = new Set<() => void>();
+function subscribeHint(listener: () => void) {
+  hintListeners.add(listener);
+  return () => {
+    hintListeners.delete(listener);
+  };
+}
+function readHintSeen() {
+  if (hintSeenInMemory) return true;
+  try {
+    return localStorage.getItem(HINT_KEY) === "1";
+  } catch {
+    return true;
   }
-  return result;
+}
+function markHintSeen() {
+  if (hintSeenInMemory) return;
+  hintSeenInMemory = true;
+  try {
+    localStorage.setItem(HINT_KEY, "1");
+  } catch {
+    // Private mode: the tip just comes back next visit.
+  }
+  hintListeners.forEach((listener) => listener());
+}
+
+// The tray docks in the phone's bottom bar and sits under the pitch from lg up.
+// Only the one for the current layout is rendered.
+const DESKTOP_QUERY = "(min-width: 1024px)";
+function subscribeDesktop(listener: () => void) {
+  const query = window.matchMedia(DESKTOP_QUERY);
+  query.addEventListener("change", listener);
+  return () => query.removeEventListener("change", listener);
+}
+function readDesktop() {
+  return window.matchMedia(DESKTOP_QUERY).matches;
 }
 
 export default function TeamBuilderPage() {
@@ -89,7 +139,18 @@ export default function TeamBuilderPage() {
   // rearranged squad from a saved one.
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
   const [selectedBenchForSwap, setSelectedBenchForSwap] = useState<string | null>(null);
+  // The lineup before the most recent local edit, for UNDO. One level deep, and
+  // cleared whenever the server's copy replaces the local one.
   const [lastSwap, setLastSwap] = useState<SwapSnapshot | null>(null);
+  // The starter whose options tray is open.
+  const [tray, setTray] = useState<{ playerId: string; viaKeyboard: boolean } | null>(null);
+  // Read out by screen readers when the pitch changes.
+  const [announcement, setAnnouncement] = useState("");
+  const hintSeen = useSyncExternalStore(subscribeHint, readHintSeen, () => true);
+  const isDesktop = useSyncExternalStore(subscribeDesktop, readDesktop, () => false);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const [dockHeight, setDockHeight] = useState(0);
+  const reduceMotion = useReducedMotion();
 
   /** A stable fingerprint of a squad: who plays, where, and who is captain. */
   const squadSignature = (
@@ -125,6 +186,7 @@ export default function TeamBuilderPage() {
         );
         setBench(myTeam.bench || []);
         setCaptainId(myTeam.captain_id || null);
+        setLastSwap(null);
         setSavedSignature(
           squadSignature(
             (myTeam.players || []).map((sp) => ({
@@ -220,9 +282,38 @@ export default function TeamBuilderPage() {
   // Formation info
   const formationLabel = getFormationLabel(selected);
   const missingPositions = getMissingPositions(selected);
+  const lineupIssues = getLineupIssues(selected);
+  const lineupHasIssues = hasLineupIssues(lineupIssues);
+  // Why Save is off, when the reason is the lineup's shape rather than its size.
+  const saveBlockLabel =
+    selected.length === 6 && lineupHasIssues
+      ? lineupIssues.missing[0]
+        ? `Need ${lineupIssues.missing[0]}`
+        : "1 GK only"
+      : null;
+  const saveBlockTitle = saveBlockLabel
+    ? "Your lineup needs exactly 1 GK and at least 1 DEF, MID and FWD"
+    : undefined;
+
+  const editable = !lockStatus?.locked && !saving;
+
+  /**
+   * Every local change to the lineup starts here: it refuses while the lineup
+   * is locked, and otherwise remembers the lineup as it was so UNDO can put it
+   * back.
+   */
+  const beginEdit = (): boolean => {
+    if (lockStatus?.locked) {
+      setError(LOCK_MSG);
+      return false;
+    }
+    setLastSwap({ selected: [...selected], bench: [...bench], captainId });
+    return true;
+  };
 
   /** Add a player as a starter with the chosen position. */
   const addStarter = (player: Player, position: Position) => {
+    if (!beginEdit()) return;
     setSelected((prev) => [...prev, { player, assignedPosition: position }]);
     setError("");
     setPendingPlayer(null);
@@ -230,7 +321,7 @@ export default function TeamBuilderPage() {
 
   const handleSelect = (player: Player) => {
     if (lockStatus?.locked) {
-      setError("Team selection closed at the end of Saturday. Lineups reopen Sunday 12:00 PM ET.");
+      setError(LOCK_MSG);
       return;
     }
 
@@ -263,7 +354,7 @@ export default function TeamBuilderPage() {
         return;
       }
 
-      const playable = getPlayablePositions(player);
+      const playable = playablePositions(player);
 
       if (playable.length === 1) {
         // Single-position player: auto-assign
@@ -288,18 +379,66 @@ export default function TeamBuilderPage() {
         setError("Bench already has 1 GK. The other 2 bench slots must be DEF/MID/FWD.");
         return;
       }
+      if (!beginEdit()) return;
       setError("");
       setBench((prev) => [...prev, player]);
     }
   };
 
   const handleRemoveStarter = (player: Player) => {
+    if (!beginEdit()) return;
     setSelected((prev) => prev.filter((fp) => fp.player.id !== player.id));
     if (captainId === player.id) setCaptainId(null);
+    if (tray?.playerId === player.id) setTray(null);
   };
 
   const handleRemoveBench = (player: Player) => {
+    if (!beginEdit()) return;
     setBench((prev) => prev.filter((p) => p.id !== player.id));
+  };
+
+  /** Say what the pitch now looks like, for screen readers. */
+  const announceLineup = (prefix: string, next: FormationPlayer[]) => {
+    const issues = getLineupIssues(next);
+    const needs = [
+      ...issues.missing.map((pos) => `Needs ${pos}.`),
+      ...(issues.extraGk ? ["Only 1 GK can start."] : []),
+    ];
+    setAnnouncement([prefix, `Formation ${getFormationLabel(next)}.`, ...needs].join(" "));
+  };
+
+  /** Move a starter to another position they can play. */
+  const handleSetPosition = (playerId: string, to: Position) => {
+    const fp = selected.find((s) => s.player.id === playerId);
+    if (!fp || fp.assignedPosition === to || !playablePositions(fp.player).includes(to)) return;
+    if (!beginEdit()) return;
+    const next = moveStarter(selected, playerId, to);
+    setSelected(next);
+    setError("");
+    markHintSeen();
+    announceLineup(`${fp.player.name} now plays ${to}.`, next);
+  };
+
+  /** Two starters trade positions, so the lineup never passes through an invalid shape. */
+  const handleSwapSpots = (aId: string, bId: string) => {
+    const a = selected.find((s) => s.player.id === aId);
+    const b = selected.find((s) => s.player.id === bId);
+    if (!a || !b) return;
+    if (
+      !playablePositions(a.player).includes(b.assignedPosition) ||
+      !playablePositions(b.player).includes(a.assignedPosition)
+    ) {
+      return;
+    }
+    if (!beginEdit()) return;
+    const next = swapSpots(selected, aId, bId);
+    setSelected(next);
+    setError("");
+    markHintSeen();
+    announceLineup(
+      `${a.player.name} now plays ${b.assignedPosition}, ${b.player.name} now plays ${a.assignedPosition}.`,
+      next
+    );
   };
 
   const handleSave = async () => {
@@ -340,6 +479,7 @@ export default function TeamBuilderPage() {
       return;
     }
 
+    setTray(null);
     setSaving(true);
     setError("");
     setSuccess("");
@@ -366,6 +506,7 @@ export default function TeamBuilderPage() {
       );
       setBench(updated.bench);
       setCaptainId(updated.captain_id || null);
+      setLastSwap(null);
       setSavedSignature(
         squadSignature(
           (updated.players || []).map((sp) => ({
@@ -411,6 +552,8 @@ export default function TeamBuilderPage() {
       setError(`You cannot captain ${fp.player.name} because they share your name. Choose a different captain.`);
       return;
     }
+    if (captainId === playerId) return;
+    if (!beginEdit()) return;
     setCaptainId(playerId);
     setError("");
   };
@@ -500,6 +643,13 @@ export default function TeamBuilderPage() {
         ? `Gameweek ${gw} is over — transfers reopen when the next one starts`
         : "This gameweek is over — transfers reopen when the next one starts";
     }
+    // A transfer is saved on its own, against the server's lineup, and the
+    // server does not re-check the formation. Moving positions and then
+    // transferring could store a lineup with nobody at DEF, and would throw
+    // the other unsaved changes away besides.
+    if (hasUnsavedChanges) {
+      return "Save or undo your lineup changes first";
+    }
     if (captainId === player.id) {
       return "Change your captain before transferring them out";
     }
@@ -508,6 +658,7 @@ export default function TeamBuilderPage() {
 
   const handleStartTransfer = (player: Player, isBench: boolean) => {
     if (transferBlockedReason(player)) return;
+    setTray(null);
     setTransferOutPlayer(player);
     setTransferOutIsBench(isBench);
     setTransferError(null);
@@ -539,6 +690,7 @@ export default function TeamBuilderPage() {
       );
       setBench(updated.bench);
       setCaptainId(updated.captain_id || null);
+      setLastSwap(null);
       setSavedSignature(
         squadSignature(
           (updated.players || []).map((sp) => ({
@@ -550,6 +702,11 @@ export default function TeamBuilderPage() {
         ),
       );
       setTransferOutPlayer(null);
+      if (transferFocusReturn.current) {
+        // The player who left has no token now; the incoming one takes their place.
+        focusToken(transferOutIsBench ? null : playerIn.id);
+        transferFocusReturn.current = null;
+      }
       setSuccess(`Transfer complete: ${transferOutPlayer.name} out, ${playerIn.name} in!`);
       setTimeout(() => setSuccess(""), 4000);
       // Reload transfer status
@@ -570,14 +727,14 @@ export default function TeamBuilderPage() {
     return selected.find((fp) => fp.player.id === playerId)?.assignedPosition;
   };
 
-  const isSquadComplete = selected.length === 6 && bench.length === 3 && missingPositions.length === 0 && !!captainId;
+  const isSquadComplete = selected.length === 6 && bench.length === 3 && !lineupHasIssues && !!captainId;
   const canQuickSwap = !lockStatus?.locked && selected.length === 6 && bench.length === 3;
+  const swapPicking = quickSwapMode && !!selectedBenchForSwap;
 
   useEffect(() => {
     if (!canQuickSwap) {
       setQuickSwapMode(false);
       setSelectedBenchForSwap(null);
-      setLastSwap(null);
     }
   }, [canQuickSwap]);
 
@@ -586,7 +743,7 @@ export default function TeamBuilderPage() {
     const nextBenchGks = nextBench.filter((p) => p.position === "GK").length;
     if (nextBenchGks !== 1) return null;
 
-    const playable = getPlayablePositions(benchPlayer);
+    const playable = playablePositions(benchPlayer);
     const preferred = starterOut.assignedPosition;
     const orderedPlayable: Position[] = playable.includes(preferred)
       ? [preferred, ...playable.filter((pos) => pos !== preferred)]
@@ -617,6 +774,7 @@ export default function TeamBuilderPage() {
   const handleBenchSwapPick = (player: Player) => {
     if (!quickSwapMode || !canQuickSwap) return;
     setSelectedBenchForSwap((prev) => (prev === player.id ? null : player.id));
+    setTray(null);
     setError("");
   };
 
@@ -631,7 +789,7 @@ export default function TeamBuilderPage() {
       return;
     }
 
-    setLastSwap({ selected: [...selected], bench: [...bench], captainId });
+    if (!beginEdit()) return;
     setSelected((prev) =>
       prev.map((fp) =>
         fp.player.id === starterOut.player.id
@@ -641,21 +799,145 @@ export default function TeamBuilderPage() {
     );
     setBench((prev) => prev.map((p) => (p.id === benchPlayer.id ? starterOut.player : p)));
     if (captainId === starterOut.player.id) setCaptainId(null);
+    if (tray?.playerId === starterOut.player.id) setTray(null);
     setSelectedBenchForSwap(null);
     setSuccess(`Swapped ${benchPlayer.name} with ${starterOut.player.name}.`);
     setTimeout(() => setSuccess(""), 2500);
   };
 
-  const handleUndoSwap = () => {
-    if (!lastSwap) return;
+  const handleUndo = () => {
+    if (!lastSwap || !editable) return;
+    if (tray && !lastSwap.selected.some((fp) => fp.player.id === tray.playerId)) setTray(null);
     setSelected(lastSwap.selected);
     setBench(lastSwap.bench);
     setCaptainId(lastSwap.captainId);
     setLastSwap(null);
     setSelectedBenchForSwap(null);
-    setSuccess("Last swap reverted.");
+    setSuccess("Last change undone.");
     setTimeout(() => setSuccess(""), 2000);
+    announceLineup("Last change undone.", lastSwap.selected);
   };
+
+  /** The tray only shows for a starter who is still in the lineup, and only while it can be edited. */
+  const trayFp = tray && editable ? (selected.find((fp) => fp.player.id === tray.playerId) ?? null) : null;
+
+  const closeTray = () => {
+    if (tray?.viaKeyboard) {
+      document.querySelector<HTMLElement>(`[data-token-id="${tray.playerId}"]`)?.focus();
+    }
+    setTray(null);
+  };
+
+  const handlePitchTap = (fp: FormationPlayer, el: HTMLButtonElement, viaKeyboard: boolean) => {
+    if (swapPicking) {
+      handleQuickSwap(fp);
+      return;
+    }
+    if (tray?.playerId === fp.player.id) {
+      setTray(null);
+      return;
+    }
+    setTray({ playerId: fp.player.id, viaKeyboard });
+    markHintSeen();
+
+    // On a phone the tray opens in the bar at the bottom of the screen, which
+    // can cover the player just tapped. Scroll them clear once it has drawn.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const dock = dockRef.current;
+        if (!dock || dock.getBoundingClientRect().height === 0) return;
+        const rect = el.getBoundingClientRect();
+        const overlap = rect.bottom + 12 - dock.getBoundingClientRect().top;
+        if (overlap > 0) {
+          window.scrollBy({
+            top: Math.min(overlap, rect.top - 80),
+            behavior: reduceMotion ? "auto" : "smooth",
+          });
+        }
+      })
+    );
+  };
+
+  useEffect(() => {
+    if (!tray) return;
+    const onKey = (e: KeyboardEvent) => {
+      // The transfer sheet and the position picker handle their own Escape.
+      if (e.key !== "Escape" || transferOutPlayer || pendingPlayer) return;
+      setTray(null);
+      if (tray.viaKeyboard) {
+        document.querySelector<HTMLElement>(`[data-token-id="${tray.playerId}"]`)?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tray, transferOutPlayer, pendingPlayer]);
+
+  // The mobile bar grows when the tray docks in it; the page needs as much room
+  // underneath, or the last players in the list can't be scrolled clear of it.
+  useEffect(() => {
+    const dock = dockRef.current;
+    if (!dock || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setDockHeight(dock.getBoundingClientRect().height));
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, []);
+
+  const showSwitchHint =
+    editable && !hintSeen && selected.some((fp) => otherPosition(fp.player, fp.assignedPosition));
+
+  /** Once the transfer sheet closes, where keyboard focus goes back to. */
+  const transferFocusReturn = useRef<string | null>(null);
+
+  const focusToken = (playerId: string | null) => {
+    requestAnimationFrame(() => {
+      const token =
+        (playerId && document.querySelector<HTMLElement>(`[data-token-id="${playerId}"]`)) ||
+        document.querySelector<HTMLElement>("[data-token-id]");
+      token?.focus();
+    });
+  };
+
+  const trayAction = (player: Player): TrayAction => {
+    if (quickSwapMode) return null;
+    if (transferMode) {
+      return {
+        kind: "transfer",
+        blockedReason: transferBlockedReason(player),
+        onTransfer: (viaKeyboard) => {
+          transferFocusReturn.current = viaKeyboard ? player.id : null;
+          handleStartTransfer(player, false);
+        },
+      };
+    }
+    return {
+      kind: "remove",
+      onRemove: (viaKeyboard) => {
+        handleRemoveStarter(player);
+        // The button and the player's token both go; keep the keyboard on the pitch.
+        if (viaKeyboard) focusToken(null);
+      },
+    };
+  };
+
+  const renderTray = (className = "") =>
+    trayFp && (
+      <PlayerTray
+        // One key for every player: tapping from one player to the next
+        // updates the tray in place instead of stacking a leaving tray on top.
+        key="player-tray"
+        slot={trayFp}
+        starters={selected}
+        isCaptain={captainId === trayFp.player.id}
+        captainBlockedReason={canBeCaptain(trayFp.player) ? null : "shares your name"}
+        action={trayAction(trayFp.player)}
+        autoFocus={!!tray?.viaKeyboard}
+        onMove={(to) => handleSetPosition(trayFp.player.id, to)}
+        onSwap={(partnerId) => handleSwapSpots(trayFp.player.id, partnerId)}
+        onCaptain={() => handleSetCaptain(trayFp.player.id)}
+        onClose={closeTray}
+        className={className}
+      />
+    );
 
   return (
     <div className="min-h-screen pitch-pattern">
@@ -710,6 +992,7 @@ export default function TeamBuilderPage() {
                   setQuickSwapMode((prev) => !prev);
                   setSelectedBenchForSwap(null);
                   setTransferOutPlayer(null);
+                  setTray(null);
                   setError("");
                 }}
                 className="px-3 py-2 rounded-lg text-xs font-bold cursor-pointer border-none transition-all"
@@ -726,6 +1009,7 @@ export default function TeamBuilderPage() {
             <button
               onClick={handleSave}
               disabled={saving || !isSquadComplete || isOverBudget || lockStatus?.locked}
+              title={saveBlockTitle}
               className="btn-primary hidden lg:flex items-center gap-2 text-sm disabled:opacity-50"
               style={
                 hasUnsavedChanges && !lockStatus?.locked
@@ -738,9 +1022,11 @@ export default function TeamBuilderPage() {
                 ? "Locked"
                 : saving
                   ? "Saving..."
-                  : hasUnsavedChanges
-                    ? "Save Team •"
-                    : "Save Team"}
+                  : saveBlockLabel
+                    ? saveBlockLabel
+                    : hasUnsavedChanges
+                      ? "Save Team •"
+                      : "Save Team"}
             </button>
           </div>
         </motion.div>
@@ -809,7 +1095,8 @@ export default function TeamBuilderPage() {
             </div>
             {lastSwap && (
               <button
-                onClick={handleUndoSwap}
+                onClick={handleUndo}
+                disabled={!editable}
                 className="px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none"
                 style={{
                   fontFamily: "var(--font-display)",
@@ -923,6 +1210,10 @@ export default function TeamBuilderPage() {
             onClose={() => {
               setTransferOutPlayer(null);
               setTransferError(null);
+              if (transferFocusReturn.current) {
+                focusToken(transferFocusReturn.current);
+                transferFocusReturn.current = null;
+              }
             }}
           />
         )}
@@ -951,9 +1242,11 @@ export default function TeamBuilderPage() {
                 {`GW${transferStatus?.active_gameweek} · ${Math.max(0, freeTransfers - transfersUsed)} FREE TRANSFER${Math.max(0, freeTransfers - transfersUsed) === 1 ? "" : "S"} LEFT · $${formatMoney(remainingBudget)} BUDGET`}
               </p>
               <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                {transfersUsed >= freeTransfers
-                  ? `Your next transfer costs −4 points${pointsHit > 0 ? ` · −${pointsHit} taken so far` : ""}`
-                  : "Tap a squad player to start a transfer — nothing changes until you confirm"}
+                {hasUnsavedChanges
+                  ? "Save or undo your lineup changes before making a transfer"
+                  : transfersUsed >= freeTransfers
+                    ? `Your next transfer costs −4 points${pointsHit > 0 ? ` · −${pointsHit} taken so far` : ""}`
+                    : "Tap a player on the pitch to move, captain or transfer them — nothing changes until you confirm"}
               </p>
               {transferStatus?.transferred_out && transferStatus?.transferred_in && (
                 <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
@@ -997,20 +1290,12 @@ export default function TeamBuilderPage() {
                 </p>
 
                 <div className="flex gap-3">
-                  {getPlayablePositions(pendingPlayer).map((pos) => {
-                    const badgeClass =
-                      pos === "GK"
-                        ? "badge-gk"
-                        : pos === "DEF"
-                        ? "badge-def"
-                        : pos === "MID"
-                        ? "badge-mid"
-                        : "badge-fwd";
+                  {playablePositions(pendingPlayer).map((pos) => {
                     return (
                       <button
                         key={pos}
                         onClick={() => addStarter(pendingPlayer, pos)}
-                        className={`flex-1 ${badgeClass} text-white font-bold py-3 rounded-xl text-sm transition-all hover:scale-105 cursor-pointer border-none`}
+                        className={`flex-1 ${POSITION_BADGE[pos]} text-white font-bold py-3 rounded-xl text-sm transition-all hover:scale-105 cursor-pointer border-none`}
                         style={{ fontFamily: "var(--font-display)", letterSpacing: "0.05em" }}
                       >
                         <ChevronDown size={14} className="inline mr-1 opacity-60" />
@@ -1060,8 +1345,63 @@ export default function TeamBuilderPage() {
                     {formationLabel}
                   </span>
                 )}
+                {lastSwap && editable && (
+                  <button
+                    type="button"
+                    onClick={handleUndo}
+                    aria-label="Undo last change"
+                    className={`hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border-none cursor-pointer ${formationLabel ? "" : "ml-auto"}`}
+                    style={{ background: "rgba(255,255,255,0.06)", color: "var(--text-primary)" }}
+                  >
+                    <Undo2 size={12} />
+                    Undo
+                  </button>
+                )}
               </h3>
-              <Formation players={selected} captainId={captainId} onRemove={handleRemoveStarter} />
+              {showSwitchHint && (
+                <p
+                  className="text-[11px] -mt-2 mb-3 flex items-center gap-1.5"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <ArrowLeftRight size={11} className="shrink-0" style={{ color: "var(--accent-green)" }} />
+                  <span className="flex-1">
+                    Tap ⇄ under a player to switch their position. Tap the player for captain and more.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={markHintSeen}
+                    aria-label="Dismiss tip"
+                    className="shrink-0 w-6 h-6 -my-1 flex items-center justify-center rounded bg-transparent border-none cursor-pointer"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    <X size={12} />
+                  </button>
+                </p>
+              )}
+              <Formation
+                players={selected}
+                captainId={captainId}
+                activePlayerId={trayFp?.player.id ?? null}
+                swapHints={
+                  swapPicking
+                    ? Object.fromEntries(
+                        selected.map((fp) => [fp.player.id, isValidStarterSwapTarget(fp) ? "target" : "blocked"] as const)
+                      )
+                    : undefined
+                }
+                swapBenchName={bench.find((p) => p.id === selectedBenchForSwap)?.name}
+                switchDisabled={swapPicking}
+                onPlayerTap={editable ? handlePitchTap : undefined}
+                onSwitchPosition={editable ? (fp, to) => handleSetPosition(fp.player.id, to) : undefined}
+                onBackgroundTap={trayFp ? closeTray : undefined}
+              />
+              <p className="sr-only" role="status" aria-live="polite">
+                {announcement}
+              </p>
+              {/* On a phone the tray docks in the bottom bar instead. */}
+              <div className="hidden lg:block mt-3">
+                <AnimatePresence>{isDesktop && renderTray()}</AnimatePresence>
+              </div>
 
               {/* Captain prompt */}
               {selected.length > 0 && !captainId && (
@@ -1087,6 +1427,7 @@ export default function TeamBuilderPage() {
                   const benchPlayerForSwap = selectedBenchForSwap ? bench.find((p) => p.id === selectedBenchForSwap) : null;
                   const isSwapTarget = quickSwapMode && !!selectedBenchForSwap && isValidStarterSwapTarget(fp);
                   const isSwapBlocked = quickSwapMode && !!selectedBenchForSwap && !isSwapTarget;
+                  const otherPos = otherPosition(fp.player, fp.assignedPosition);
                   return (
                     <motion.div
                       key={fp.player.id}
@@ -1130,18 +1471,35 @@ export default function TeamBuilderPage() {
                       >
                         C
                       </button>
-                      <span
-                        className={`badge-${fp.assignedPosition.toLowerCase()} text-[10px] font-bold px-1.5 py-0.5 rounded text-white`}
-                      >
-                        {fp.assignedPosition}
-                      </span>
-                      {fp.assignedPosition !== fp.player.position && (
-                        <span
-                          className="text-[9px] font-bold px-1 rounded"
-                          style={{ background: "rgba(255,171,0,0.2)", color: "#ffab00" }}
-                        >
-                          FLEX
-                        </span>
+                      {otherPos ? (
+                        <PositionPill
+                          playerName={fp.player.name}
+                          primary={fp.player.position}
+                          secondary={fp.player.secondary_position ?? otherPos}
+                          current={fp.assignedPosition}
+                          pulse={previewMove(selected, fp.player.id, otherPos).tone === "fix"}
+                          onSwitch={
+                            editable && !swapPicking
+                              ? () => handleSetPosition(fp.player.id, otherPos)
+                              : undefined
+                          }
+                        />
+                      ) : (
+                        <>
+                          <span
+                            className={`${POSITION_BADGE[fp.assignedPosition]} text-[10px] font-bold px-1.5 py-0.5 rounded text-white`}
+                          >
+                            {fp.assignedPosition}
+                          </span>
+                          {fp.assignedPosition !== fp.player.position && (
+                            <span
+                              className="text-[9px] font-bold px-1 rounded"
+                              style={{ background: "rgba(255,171,0,0.2)", color: "#ffab00" }}
+                            >
+                              FLEX
+                            </span>
+                          )}
+                        </>
                       )}
                       {fp.player.is_top_player && (
                         <Crown size={12} style={{ color: "#fbbf24", flexShrink: 0 }} />
@@ -1160,7 +1518,7 @@ export default function TeamBuilderPage() {
                             color: isSwapTarget ? "var(--accent-green)" : "var(--text-muted)",
                           }}
                         >
-                          {selectedBenchForSwap ? (isSwapTarget ? "SWAP" : "LOCKED") : "PICK BENCH"}
+                          {selectedBenchForSwap ? (isSwapTarget ? "SWAP" : "NO FIT") : "PICK BENCH"}
                         </span>
                       ) : transferMode ? (
                         <button
@@ -1169,11 +1527,12 @@ export default function TeamBuilderPage() {
                             handleStartTransfer(fp.player, false);
                           }}
                           title={transferBlockedReason(fp.player) ?? "Transfer this player out"}
+                          aria-label={`Transfer ${fp.player.name} out`}
                           disabled={
                             !!transferBlockedReason(fp.player) ||
                             transferOutPlayer?.id === fp.player.id
                           }
-                          className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-30"
+                          className="flex items-center justify-center gap-1 min-w-8 min-h-8 sm:min-h-0 px-2 py-1 rounded text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-30"
                           style={{
                             fontFamily: "var(--font-display)",
                             background: transferOutPlayer?.id === fp.player.id
@@ -1185,11 +1544,18 @@ export default function TeamBuilderPage() {
                           }}
                         >
                           <ArrowLeftRight size={10} />
-                          {transferOutPlayer?.id === fp.player.id ? "OUT" : "TRANSFER"}
+                          {/* Icon only on a phone: the position pill needs the room for the name. */}
+                          <span className="hidden sm:inline">
+                            {transferOutPlayer?.id === fp.player.id ? "OUT" : "TRANSFER"}
+                          </span>
                         </button>
                       ) : (
                         <button
-                          onClick={() => handleRemoveStarter(fp.player)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveStarter(fp.player);
+                          }}
+                          aria-label={`Remove ${fp.player.name}`}
                           className="text-xs bg-transparent border-none cursor-pointer"
                           style={{ color: "var(--danger)" }}
                         >
@@ -1202,12 +1568,15 @@ export default function TeamBuilderPage() {
               </div>
 
               {/* Position requirement indicators */}
-              {selected.length > 0 && selected.length < 6 && missingPositions.length > 0 && (
+              {selected.length > 0 && selected.length < 6 && lineupHasIssues && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {missingPositions.map((pos) => (
+                  {[
+                    ...lineupIssues.missing.map((pos) => `Need 1 ${pos}`),
+                    ...(lineupIssues.extraGk ? ["Only 1 GK can start"] : []),
+                  ].map((label) => (
                     <span
-                      key={pos}
-                      className="text-[10px] font-bold px-2 py-1 rounded-full animate-pulse"
+                      key={label}
+                      className="text-[10px] font-bold px-2 py-1 rounded-full motion-safe:animate-pulse"
                       style={{
                         background: "rgba(255,82,82,0.1)",
                         border: "1px solid rgba(255,82,82,0.3)",
@@ -1215,7 +1584,7 @@ export default function TeamBuilderPage() {
                         fontFamily: "var(--font-display)",
                       }}
                     >
-                      Need 1 {pos}
+                      {label}
                     </span>
                   ))}
                 </div>
@@ -1493,11 +1862,12 @@ export default function TeamBuilderPage() {
                           handleStartTransfer(player, true);
                         }}
                         title={transferBlockedReason(player) ?? "Transfer this player out"}
+                        aria-label={`Transfer ${player.name} out`}
                         disabled={
                           !!transferBlockedReason(player) ||
                           transferOutPlayer?.id === player.id
                         }
-                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-30"
+                        className="flex items-center justify-center gap-1 min-w-8 min-h-8 sm:min-h-0 px-2 py-1 rounded text-[10px] font-bold cursor-pointer border-none transition-all disabled:opacity-30"
                         style={{
                           fontFamily: "var(--font-display)",
                           background: transferOutPlayer?.id === player.id
@@ -1509,7 +1879,9 @@ export default function TeamBuilderPage() {
                         }}
                       >
                         <ArrowLeftRight size={10} />
-                        {transferOutPlayer?.id === player.id ? "OUT" : "TRANSFER"}
+                        <span className="hidden sm:inline">
+                          {transferOutPlayer?.id === player.id ? "OUT" : "TRANSFER"}
+                        </span>
                       </button>
                     ) : (
                       <button
@@ -1680,10 +2052,22 @@ export default function TeamBuilderPage() {
                     onRemove={
                       quickSwapMode
                         ? undefined
-                        : (p) => {
-                            if (selected.some((fp) => fp.player.id === p.id)) handleRemoveStarter(p);
-                            else handleRemoveBench(p);
-                          }
+                        : transferMode
+                          ? // Mid-gameweek a squad player leaves only by transfer, so a
+                            // tap here must not quietly drop them from the lineup.
+                            (p) => {
+                              if (selected.some((fp) => fp.player.id === p.id)) {
+                                if (editable) setTray({ playerId: p.id, viaKeyboard: false });
+                                return;
+                              }
+                              const blocked = transferBlockedReason(p);
+                              if (blocked) setError(blocked);
+                              else handleStartTransfer(p, true);
+                            }
+                          : (p) => {
+                              if (selected.some((fp) => fp.player.id === p.id)) handleRemoveStarter(p);
+                              else handleRemoveBench(p);
+                            }
                     }
                     delay={i * 0.03}
                   />
@@ -1699,13 +2083,21 @@ export default function TeamBuilderPage() {
           </div>
         </div>
 
+        {/* pb-28 already clears the bar without a tray. */}
+        <div aria-hidden className="lg:hidden" style={{ height: Math.max(0, dockHeight - 112) }} />
+
         <div
+          ref={dockRef}
           className="fixed bottom-0 left-0 right-0 z-40 lg:hidden p-3"
           style={{
             background: "linear-gradient(180deg, rgba(10,10,18,0) 0%, rgba(10,10,18,0.96) 26%, rgba(10,10,18,1) 100%)",
             backdropFilter: "blur(6px)",
           }}
         >
+          {/* The tray sits in thumb reach, above the buttons, which stay usable. */}
+          <div className="max-w-7xl mx-auto">
+            <AnimatePresence>{!isDesktop && renderTray("mb-2")}</AnimatePresence>
+          </div>
           <div className="max-w-7xl mx-auto grid grid-cols-3 gap-2">
             <button
               onClick={() => {
@@ -1713,6 +2105,7 @@ export default function TeamBuilderPage() {
                 setQuickSwapMode((prev) => !prev);
                 setTransferOutPlayer(null);
                 setSelectedBenchForSwap(null);
+                setTray(null);
                 setError("");
               }}
               disabled={!canQuickSwap}
@@ -1726,8 +2119,9 @@ export default function TeamBuilderPage() {
               {quickSwapMode ? "SWAP ON" : "SWAP"}
             </button>
             <button
-              onClick={handleUndoSwap}
-              disabled={!lastSwap}
+              onClick={handleUndo}
+              disabled={!lastSwap || !editable}
+              aria-label="Undo last change"
               className="px-3 py-2 rounded-lg text-[11px] font-bold border-none cursor-pointer disabled:opacity-40"
               style={{
                 fontFamily: "var(--font-display)",
@@ -1740,6 +2134,7 @@ export default function TeamBuilderPage() {
             <button
               onClick={handleSave}
               disabled={saving || !isSquadComplete || isOverBudget || lockStatus?.locked}
+              title={saveBlockTitle}
               className="px-3 py-2 rounded-lg text-[11px] font-bold border-none cursor-pointer disabled:opacity-40"
               style={{
                 fontFamily: "var(--font-display)",
@@ -1753,7 +2148,15 @@ export default function TeamBuilderPage() {
                     : undefined,
               }}
             >
-              {saving ? "SAVING" : hasUnsavedChanges ? "SAVE •" : "SAVE"}
+              {lockStatus?.locked
+                ? "LOCKED"
+                : saving
+                  ? "SAVING"
+                  : saveBlockLabel
+                    ? saveBlockLabel.toUpperCase()
+                    : hasUnsavedChanges
+                      ? "SAVE •"
+                      : "SAVE"}
             </button>
           </div>
         </div>

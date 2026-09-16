@@ -17,6 +17,7 @@ import {
   type PlayerStatInput,
   type MatchWeek,
   type AdminLineupLockStatus,
+  type Position,
 } from "@/lib/api";
 import { getToken, getUser, isAuthenticated } from "@/lib/auth";
 
@@ -35,12 +36,48 @@ const STAT_FIELDS = [
 
 type StatKey = (typeof STAT_FIELDS)[number]["key"];
 
-const POS_COLORS: Record<string, string> = {
+const POS_COLORS: Record<Position, string> = {
   GK: "var(--accent-amber)",
   DEF: "#60a5fa",
   MID: "var(--accent-green)",
   FWD: "#f87171",
 };
+
+// The secondary badge is outlined and dimmed so the two never read as equals.
+function PositionBadge({ position, secondary = false }: { position: Position; secondary?: boolean }) {
+  const color = POS_COLORS[position];
+  return (
+    <span
+      className="text-[10px] font-bold py-0.5 rounded shrink-0 w-10 text-center"
+      style={{
+        color,
+        // color-mix rather than a hex alpha suffix: GK and MID are CSS variables,
+        // and `var(--accent-amber)18` is not a colour, so those badges had no box.
+        background: secondary ? "transparent" : `color-mix(in srgb, ${color} 10%, transparent)`,
+        border: `1px ${secondary ? "dashed" : "solid"} color-mix(in srgb, ${color} ${secondary ? 45 : 20}%, transparent)`,
+        opacity: secondary ? 0.75 : 1,
+        fontFamily: "var(--font-display)",
+      }}
+    >
+      {position}
+    </span>
+  );
+}
+
+function PlayerPositions({ position, secondary }: { position: Position; secondary: Position | null }) {
+  // A secondary that repeats the primary is ignored, as it is on the team page.
+  const alt = secondary !== position ? secondary : null;
+  return (
+    <div
+      className="flex items-center gap-1 shrink-0"
+      title={`Primary: ${position} · Secondary: ${alt ?? "none"}`}
+    >
+      <PositionBadge position={position} />
+      {/* An empty slot keeps every name in the same column. */}
+      {alt ? <PositionBadge position={alt} secondary /> : <span className="w-10 shrink-0" aria-hidden />}
+    </div>
+  );
+}
 
 export default function AdminPage() {
   const router = useRouter();
@@ -544,7 +581,7 @@ export default function AdminPage() {
                     <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
                       <th
                         className="text-left px-4 py-3 text-xs font-semibold tracking-wider"
-                        style={{ color: "var(--text-muted)", minWidth: 200 }}
+                        style={{ color: "var(--text-muted)", minWidth: 260 }}
                       >
                         PLAYER
                       </th>
@@ -569,17 +606,10 @@ export default function AdminPage() {
                       >
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <span
-                              className="text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 w-9 text-center"
-                              style={{
-                                color: POS_COLORS[player.position],
-                                background: `${POS_COLORS[player.position]}18`,
-                                border: `1px solid ${POS_COLORS[player.position]}30`,
-                                fontFamily: "var(--font-display)",
-                              }}
-                            >
-                              {player.position}
-                            </span>
+                            <PlayerPositions
+                              position={player.position}
+                              secondary={player.secondary_position}
+                            />
                             <span
                               className="text-sm font-medium"
                               style={{ color: "var(--text-primary)" }}

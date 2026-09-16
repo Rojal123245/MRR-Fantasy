@@ -55,6 +55,8 @@ pub struct AdminPlayerStats {
     pub player_id: Uuid,
     pub player_name: String,
     pub position: String,
+    /// Serialized as `null` when the player has none, never omitted.
+    pub secondary_position: Option<String>,
     pub goals: i32,
     pub assists: i32,
     pub clean_sheets: i32,
