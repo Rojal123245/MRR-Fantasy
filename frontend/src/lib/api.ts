@@ -558,7 +558,8 @@ export interface MatchWeek {
 export interface AdminPlayerStats {
   player_id: string;
   player_name: string;
-  position: string;
+  position: Position;
+  secondary_position: Position | null;
   goals: number;
   assists: number;
   clean_sheets: number;

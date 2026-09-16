@@ -417,11 +417,21 @@ pub async fn get_week_stats(
     State(state): State<AppState>,
     Path(week_number): Path<i32>,
 ) -> AppResult<Json<Vec<AdminPlayerStats>>> {
-    let stats = sqlx::query_as::<_, AdminPlayerStats>(
+    Ok(Json(week_stats(&state.pool, week_number).await?))
+}
+
+/// Every player, with both positions and their stats for one gameweek. A
+/// player with nothing entered for the week gets zeros.
+async fn week_stats(
+    executor: impl sqlx::PgExecutor<'_>,
+    week_number: i32,
+) -> Result<Vec<AdminPlayerStats>, sqlx::Error> {
+    sqlx::query_as::<_, AdminPlayerStats>(
         r#"SELECT
              p.id AS player_id,
              p.name AS player_name,
              p.position::text AS position,
+             p.secondary_position::text AS secondary_position,
              COALESCE(pp.goals, 0) AS goals,
              COALESCE(pp.assists, 0) AS assists,
              COALESCE(pp.clean_sheets, 0) AS clean_sheets,
@@ -439,10 +449,8 @@ pub async fn get_week_stats(
            ORDER BY p.position, p.name"#,
     )
     .bind(week_number)
-    .fetch_all(&state.pool)
-    .await?;
-
-    Ok(Json(stats))
+    .fetch_all(executor)
+    .await
 }
 
 /// GET /api/admin/gameweeks
@@ -1404,6 +1412,66 @@ mod budget_carry_forward_tests {
             bank_before_rescore,
             "and the correction does not disturb the bank either"
         );
+
+        tx.rollback().await.expect("rollback");
+    }
+}
+
+#[cfg(test)]
+mod week_stats_tests {
+    use super::*;
+
+    use crate::test_support::pool;
+
+    async fn add_player(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        name: &str,
+        position: &str,
+        secondary_position: Option<&str>,
+    ) -> Uuid {
+        sqlx::query_scalar(
+            "INSERT INTO players (name, position, secondary_position, team_name, price)
+             VALUES ($1, $2::player_position, $3::player_position, 'Position Fixture FC', 5.0)
+             RETURNING id",
+        )
+        .bind(name)
+        .bind(position)
+        .bind(secondary_position)
+        .fetch_one(&mut **tx)
+        .await
+        .expect("insert player")
+    }
+
+    /// The stats sheet is where an admin checks who played where, so it has to
+    /// show a player's second position as well as their first. It used to send
+    /// only the first, and a FWD who also plays MID showed up as just FWD.
+    #[tokio::test]
+    async fn the_stats_sheet_shows_both_positions() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipping: DATABASE_URL not set or unreachable");
+            return;
+        };
+        let mut tx = pool.begin().await.expect("begin");
+
+        let two = add_player(&mut tx, "Position Fixture Two", "FWD", Some("MID")).await;
+        let one = add_player(&mut tx, "Position Fixture One", "DEF", None).await;
+
+        // No such week, so every row is zeros: positions don't depend on stats.
+        let rows = week_stats(&mut *tx, 9870).await.expect("week stats");
+        let row = |id: Uuid| {
+            rows.iter()
+                .find(|r| r.player_id == id)
+                .expect("every player is on the sheet")
+        };
+
+        assert_eq!(row(two).position, "FWD");
+        assert_eq!(row(two).secondary_position.as_deref(), Some("MID"));
+        assert_eq!(row(one).position, "DEF");
+        assert_eq!(row(one).secondary_position, None);
+
+        // The page reads the field for every player, so it must be `null`, not missing.
+        let json = serde_json::to_value(row(one)).expect("serialize");
+        assert_eq!(json.get("secondary_position"), Some(&serde_json::Value::Null));
 
         tx.rollback().await.expect("rollback");
     }
